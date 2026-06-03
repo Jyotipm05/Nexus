@@ -1,2 +1,2 @@
-# Nexus
-C++ based backend framework
+# WaveX
+C++ based multipurpose backend framework

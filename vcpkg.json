@@ -1,0 +1,9 @@
+{
+  "name": "wavex",
+  "version": "0.0.0",
+  "dependencies": [
+    "vcpkg-cmake-config",
+    "vcpkg-cmake",
+    "asio"
+  ]
+}
