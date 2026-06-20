@@ -4,6 +4,9 @@
   "dependencies": [
     "vcpkg-cmake-config",
     "vcpkg-cmake",
-    "asio"
+    "asio",
+    "nlohmann-json",
+    "re2",
+    "openssl"
   ]
 }

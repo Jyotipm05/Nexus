@@ -1,9 +1,0 @@
-@PACKAGE_INIT@
-
-include(CMakeFindDependencyMacro)
-# Automatically pull in Asio for downstream users
-find_dependency(asio CONFIG REQUIRED)
-
-# Include the targets definition file
-include("${CMAKE_CURRENT_LIST_DIR}/WaveXTargets.cmake")
-check_required_components(wavex)

@@ -1,0 +1,44 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# ---------------------------------------------------------------------------
+# Find non-vendored dependencies
+# ---------------------------------------------------------------------------
+find_dependency(nlohmann_json CONFIG REQUIRED)
+find_dependency(re2 CONFIG REQUIRED)
+find_dependency(OpenSSL QUIET)
+
+# ---------------------------------------------------------------------------
+# ASIO Resolution (Mimicking vcpkg's asio-config.cmake)
+# ---------------------------------------------------------------------------
+# 1. Try to find a system/vcpkg installed asio
+find_dependency(asio CONFIG QUIET)
+
+# 2. If not found, assume the user is relying on the headers wavex installed
+if(NOT TARGET asio::asio)
+    message(STATUS "WaveX: System asio target not found. Creating asio::asio target from bundled headers.")
+
+    add_library(asio::asio INTERFACE IMPORTED GLOBAL)
+
+    # Use PACKAGE_PREFIX_DIR for relocatable installation paths across OSes
+    set_target_properties(asio::asio PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
+        INTERFACE_COMPILE_DEFINITIONS "ASIO_STANDALONE;ASIO_HAS_CO_AWAIT=1"
+    )
+
+    # Asio requires threading support
+    find_dependency(Threads QUIET)
+    if(Threads_FOUND)
+        set_target_properties(asio::asio PROPERTIES
+            INTERFACE_LINK_LIBRARIES "Threads::Threads"
+        )
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Load the exported targets
+# ---------------------------------------------------------------------------
+include("${CMAKE_CURRENT_LIST_DIR}/WaveXTargets.cmake")
+
+check_required_components(wavex)

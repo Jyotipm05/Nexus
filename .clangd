@@ -1,0 +1,18 @@
+# .clangd — WaveX project-wide clangd configuration
+#
+# This file is committed to version control. Every developer who opens this
+# project gets correct clangd analysis automatically — no manual setup needed.
+#
+# Why this file exists:
+#   CMake's compile_commands.json is generated in the build directory.
+#   The `clangd_sync` build target copies it to the project root so clangd
+#   can find it without any per-developer IDE configuration.
+
+CompileFlags:
+  # Read compile_commands.json from the project root
+  CompilationDatabase: .
+  # Remove:
+  #   - -std:*
+  #   - -external:*
+  Add:
+    - -std=c++23
