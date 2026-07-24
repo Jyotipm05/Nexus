@@ -2,7 +2,7 @@
 
 A modern, high-performance C++23 backend framework built for coroutine-native HTTP servers, Express.js-style pipeline execution, and extensible protocol support.
 
-WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), **Tokio** (work-stealing coroutine runtime with hysteresis-based thread scaling), and **Express.js** (linear middleware chain with immediate response dispatching).
+WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), **Tokio** (lock-free dual-queue runtime with hysteresis-based thread scaling), and **Express.js** (linear middleware chain with immediate response dispatching).
 
 [![Version: v0.1.0-alpha](https://img.shields.io/badge/Version-v0.1.0--alpha-orange.svg)](RELEASE_NOTES.md)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
@@ -16,7 +16,10 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 - **⚡ Coroutine-Native Engine** — Async handlers written with Asio C++23 coroutines (`co_await`, `asio::awaitable<void>`), zero callback boilerplate.
 - **🚀 Express.js-Style Linear Pipeline** — Iterative, non-recursive `run_chain()` middleware runner with immediate response dispatch (`res.send()` / `res.json()`) and zero-allocation socket pointer dispatch (`HttpResponse res(&socket)`).
 - **🌳 Hybrid Radix-Tree Router** — High-performance radix-tree supporting static segments, dynamic parameters (`:id`), `{id:[0-9]+}` RE2 regex constraints, and catch-all wildcards (`*filepath`).
-- **🧵 Work-Stealing Runtime** — Tokio-inspired adaptive thread pool with hysteresis scaling and dynamic task redistribution across worker threads.
+- **🧵 Tokio-Style Lock-Free Dual-Queue Runtime** —
+  - **`LocalQueue`**: Bounded 256-slot lock-free ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
+  - **`InjectorQueue`**: Unbounded global MPMC queue with lock-free atomic size tracking for external tasks and overflow.
+  - **Zero Request Loss on Scale-Down**: Retiring workers safely drain their remaining local ring tasks back into `InjectorQueue` on thread exit.
 - **🛡 Pipeline Short-Circuiting** — Middleware rejection (e.g. `401 Unauthorized`) immediately sends the response while skipping downstream middlewares and route handlers.
 - **📦 C++20 Modules & Headers** — Dual distribution models: standard C++ header inclusions (`#include <wavex/wavex.hpp>`) and modern C++20 Module partitions (`import wavex;`).
 - **🧪 Interactive Postman Dev Server** — Pre-configured testing server ([tests/postman_demo_server.cpp](tests/postman_demo_server.cpp)) with ready-to-use Postman test endpoints.
@@ -95,11 +98,13 @@ graph LR
         Router --> HttpRouter
     end
 
-    subgraph "Server & Runtime"
-        Queue["WorkStealingQueue"]
+    subgraph "Tokio Dual-Queue Runtime"
+        LocalQ["LocalQueue<br/><small>256-slot lock-free ring</small>"]
+        InjQ["InjectorQueue<br/><small>global MPMC overflow</small>"]
         Pool["ThreadPool<br/><small>hysteresis scaling</small>"]
         Server["Server<br/><small>coroutine acceptor</small>"]
-        Queue --> Pool
+        LocalQ --> Pool
+        InjQ --> Pool
         Pool --> Server
     end
 
@@ -128,6 +133,8 @@ graph LR
     style HReq fill:#40916c,color:#fff
     style HRes fill:#40916c,color:#fff
     style Server fill:#52b788,color:#000
+    style LocalQ fill:#1b4332,color:#fff
+    style InjQ fill:#1b4332,color:#fff
     style Pool fill:#52b788,color:#000
 ```
 
@@ -144,7 +151,9 @@ graph LR
 | `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware type & linear iterative execution |
 | `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex & wildcard (`*filepath`) matching |
 | `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, etc.) |
-| `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-like work-stealing thread pool with load hysteresis |
+| `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot lock-free bounded ring buffer |
+| `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with lock-free atomic size tracking |
+| `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
 | `Server/Server` | ✅ Complete | Coroutine TCP server with master acceptor & slave worker pool |
 | `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser & encoder |
 | `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request owning receive buffer |
@@ -155,10 +164,12 @@ graph LR
 ## Building & Testing
 
 ### Requirements
+
 - **C++ Compiler**: GCC 13+, Clang 16+, or MSVC 19.36+ with C++23 enabled.
 - **Build System**: CMake 3.20+.
 
 ### Build & Run Tests
+
 ```bash
 # Clone the repository
 git clone https://github.com/Jyotipm05/WaveX.git
@@ -173,10 +184,13 @@ ctest --test-dir build --output-on-failure
 ```
 
 ### Manual Testing with Postman
+
 Launch the interactive dev server ([tests/postman_demo_server.cpp](tests/postman_demo_server.cpp)):
+
 ```bash
 ./build/tests/Debug/wavex_postman_server.exe
 ```
+
 Then send HTTP requests in Postman to `http://127.0.0.1:8080` (see endpoint reference in [RELEASE_NOTES.md](RELEASE_NOTES.md)).
 
 ---
@@ -208,8 +222,8 @@ include/wavex/
 │   ├── Router.hpp           ← Protocol-agnostic radix tree + RE2
 │   └── HttpRouter.hpp       ← HTTP route shortcuts
 ├── Server/
-│   ├── WorkStealingQueue.hpp← Lock-free work-stealing queue
-│   ├── ThreadPool.hpp       ← Adaptive worker pool
+│   ├── WorkStealingQueue.hpp← LocalQueue (lock-free ring) & InjectorQueue (global MPMC)
+│   ├── ThreadPool.hpp       ← Tokio-style adaptive worker pool
 │   └── Server.hpp           ← Coroutine TCP server
 └── protos/
     └── http/
@@ -229,6 +243,6 @@ cmake/                       ← CMake installation config
 
 - **License**: WaveX is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 - **Third-Party Notices**: See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency copyright statements.
-- **Release Notes**: See [RELEASE_NOTES.md](RELEASE_NOTES.md) for version `v0.1.0-alpha` details.
+- **Release Notes**: See RELEASE_NOTES for version `v0.1.0-alpha` details.
 
 Copyright © 2026 Jyotipriya Mondal

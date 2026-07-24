@@ -56,40 +56,60 @@ void test_http_response_serialization() {
     check(json_wire.find("Content-Type: application/json\r\n") != std::string::npos, "JSON header set automatically");
 }
 
-// ─── Test 2: WorkStealingQueue Operations ────────────────────────────────────
+// ─── Test 2: LocalQueue & InjectorQueue Operations ───────────────────────────
 
 void test_work_stealing_queue() {
-    std::cout << "\n[Test 2] WorkStealingQueue push, pop, steal, and drain_all\n";
+    std::cout << "\n[Test 2] LocalQueue (ring buffer) push, pop, steal, drain_all\n";
 
-    wavex::server::WorkStealingQueue q;
+    wavex::server::LocalQueue lq;
     int counter = 0;
 
-    q.push([&counter] { counter += 10; });
-    q.push([&counter] { counter += 20; });
-    q.push([&counter] { counter += 30; });
+    check(lq.push([&counter] { counter += 10; }), "Push task 1 (10)");
+    check(lq.push([&counter] { counter += 20; }), "Push task 2 (20)");
+    check(lq.push([&counter] { counter += 30; }), "Push task 3 (30)");
 
-    check(q.size() == 3, "Queue size is 3");
+    check(lq.size() == 3, "LocalQueue size is 3");
 
-    // Pop (LIFO order by owner thread)
-    auto task1 = q.pop();
-    check(task1.has_value(), "Task popped by owner");
+    // Pop (LIFO order — owner thread takes from back)
+    auto task1 = lq.pop();
+    check(task1.has_value(), "Task popped by owner (LIFO)");
     if (task1) (*task1)();
     check(counter == 30, "LIFO task 3 executed (+30)");
 
-    // Steal (FIFO order by thief thread)
-    auto stolen_task = q.steal();
-    check(stolen_task.has_value(), "Task stolen by thief");
+    // Steal (FIFO order — thief takes from front)
+    auto stolen_task = lq.steal();
+    check(stolen_task.has_value(), "Task stolen by thief (FIFO)");
     if (stolen_task) (*stolen_task)();
     check(counter == 40, "FIFO stolen task 1 executed (+10)");
 
-    // Drain all remaining
-    q.push([&counter] { counter += 100; });
-    auto drained = q.drain_all();
-    check(q.empty(), "Queue is empty after drain_all()");
-    check(drained.size() == 2, "Drained 2 remaining tasks");
-
+    // Drain remaining
+    check(lq.push([&counter] { counter += 100; }), "Push extra task for drain");
+    auto drained = lq.drain_all();
+    check(lq.empty(), "LocalQueue empty after drain_all()");
+    check(drained.size() == 2, "Drained 2 remaining tasks (task2 + extra)");
     for (auto &t : drained) t();
     check(counter == 160, "Executed drained tasks (+20 +100 -> 160 total)");
+
+    std::cout << "\n[Test 2b] InjectorQueue push / pop (global MPMC)\n";
+
+    wavex::server::InjectorQueue inj;
+    check(inj.empty(), "InjectorQueue starts empty");
+
+    int inj_counter = 0;
+    inj.push([&inj_counter] { inj_counter += 1; });
+    inj.push([&inj_counter] { inj_counter += 2; });
+    inj.push([&inj_counter] { inj_counter += 3; });
+
+    check(inj.size() == 3, "InjectorQueue size is 3");
+
+    // FIFO order
+    if (auto t = inj.pop()) (*t)();
+    check(inj_counter == 1, "InjectorQueue FIFO: first task (+1)");
+    if (auto t = inj.pop()) (*t)();
+    check(inj_counter == 3, "InjectorQueue FIFO: second task (+2)");
+    if (auto t = inj.pop()) (*t)();
+    check(inj_counter == 6, "InjectorQueue FIFO: third task (+3)");
+    check(inj.empty(), "InjectorQueue empty after all pops");
 }
 
 // ─── Test 3: ThreadPoolConfig Singleton Customization ───────────────────────
