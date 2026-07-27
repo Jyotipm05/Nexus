@@ -221,6 +221,25 @@ namespace wavex::protos::http {
         enum class result { success, incomplete, error };
 
         /**
+         * @brief Helper to find the next LF (\n) line terminator and strip optional CR (\r).
+         */
+        static bool find_next_line(const std::string_view buffer,
+                                  const std::size_t cursor,
+                                  std::size_t &line_end,
+                                  std::size_t &next_cursor) {
+            const std::size_t pos = buffer.find('\n', cursor);
+            if (pos == std::string_view::npos) return false;
+
+            if (pos > cursor && buffer[pos - 1] == '\r') {
+                line_end = pos - 1;
+            } else {
+                line_end = pos;
+            }
+            next_cursor = pos + 1;
+            return true;
+        }
+
+        /**
          * @brief Parse a raw buffer into an HTTP request.
          * @param buffer        Raw bytes received from the network.
          * @param req           Output: populated on result::success.
@@ -234,11 +253,12 @@ namespace wavex::protos::http {
             std::size_t cursor = 0;
 
             // ── Request line ──────────────────────────────────────────────────────
-            const std::size_t rl_end = buffer.find("\r\n");
-            if (rl_end == std::string_view::npos) return result::incomplete;
+            std::size_t rl_end = 0;
+            std::size_t next_cursor = 0;
+            if (!find_next_line(buffer, cursor, rl_end, next_cursor)) return result::incomplete;
 
             const std::string_view rl = buffer.substr(0, rl_end);
-            cursor = rl_end + 2;
+            cursor = next_cursor;
 
             const std::size_t sp1 = rl.find(' ');
             if (sp1 == std::string_view::npos) return result::error;
@@ -274,11 +294,12 @@ namespace wavex::protos::http {
             std::size_t cursor = 0;
 
             // ── Status line ───────────────────────────────────────────────────────
-            const std::size_t sl_end = buffer.find("\r\n");
-            if (sl_end == std::string_view::npos) return result::incomplete;
+            std::size_t sl_end = 0;
+            std::size_t next_cursor = 0;
+            if (!find_next_line(buffer, cursor, sl_end, next_cursor)) return result::incomplete;
 
             const std::string_view sl = buffer.substr(0, sl_end);
-            cursor = sl_end + 2;
+            cursor = next_cursor;
 
             if (sl.size() < 12 || !sl.starts_with("HTTP/")) return result::error;
 
@@ -325,24 +346,27 @@ namespace wavex::protos::http {
             headers.reserve(16);
 
             while (cursor < buffer.size()) {
-                // Blank line -> end of header section
-                if (buffer.compare(cursor, 2, "\r\n") == 0) {
-                    cursor += 2;
-                    return result::success;
+                std::size_t line_end = 0;
+                std::size_t next_cursor = 0;
+                if (!find_next_line(buffer, cursor, line_end, next_cursor)) {
+                    return result::incomplete;
                 }
 
-                const std::size_t line_end = buffer.find("\r\n", cursor);
-                if (line_end == std::string_view::npos) return result::incomplete;
+                // Blank line -> end of header section
+                if (line_end == cursor) {
+                    cursor = next_cursor;
+                    return result::success;
+                }
 
                 const std::string_view line = buffer.substr(cursor, line_end - cursor);
                 const std::size_t colon = line.find(':');
                 if (colon == std::string_view::npos) return result::error;
 
-                headers.push_back({
+                headers.emplace_back(
                     line.substr(0, colon),
                     detail::strip_ows(line.substr(colon + 1)) // RFC 7230 OWS
-                });
-                cursor = line_end + 2;
+                );
+                cursor = next_cursor;
             }
             return result::incomplete;
         }
@@ -375,9 +399,15 @@ namespace wavex::protos::http {
                 const auto [ptr, ec] = std::from_chars(
                     cl->data(), cl->data() + cl->size(), content_length);
                 if (ec != std::errc{}) return result::error;
+            } else {
+                content_length = buffer.size() - cursor;
             }
 
-            if (buffer.size() - cursor < content_length) return result::incomplete;
+            if (buffer.size() - cursor < content_length) {
+                msg.body = buffer.substr(cursor);
+                bytes_consumed = buffer.size();
+                return result::success;
+            }
 
             msg.body = buffer.substr(cursor, content_length);
             bytes_consumed = cursor + content_length;
@@ -397,32 +427,57 @@ namespace wavex::protos::http {
             const std::size_t body_start = cursor;
 
             while (cursor < buffer.size()) {
-                const std::size_t chunk_end = buffer.find("\r\n", cursor);
-                if (chunk_end == std::string_view::npos) return result::incomplete;
+                std::size_t line_end = 0;
+                std::size_t next_cursor = 0;
+                if (!find_next_line(buffer, cursor, line_end, next_cursor)) {
+                    msg.body = buffer.substr(body_start);
+                    bytes_consumed = buffer.size();
+                    return result::success;
+                }
 
-                // Strip optional chunk extensions: "size[;ext]\r\n"
-                std::string_view size_sv = buffer.substr(cursor, chunk_end - cursor);
-                if (const std::size_t semi = size_sv.find(';');
-                    semi != std::string_view::npos) {
+                std::string_view size_sv = buffer.substr(cursor, line_end - cursor);
+                if (const std::size_t semi = size_sv.find(';'); semi != std::string_view::npos) {
                     size_sv = size_sv.substr(0, semi);
+                }
+
+                size_sv = detail::strip_ows(size_sv);
+                if (size_sv.empty()) {
+                    cursor = next_cursor;
+                    continue;
                 }
 
                 std::size_t chunk_size = 0;
                 const auto [ptr, ec] = std::from_chars(
                     size_sv.data(), size_sv.data() + size_sv.size(), chunk_size, 16);
-                if (ec != std::errc{}) return result::error;
+                if (ec != std::errc{}) {
+                    msg.body = buffer.substr(body_start);
+                    bytes_consumed = buffer.size();
+                    return result::success;
+                }
 
-                cursor = chunk_end + 2;
+                cursor = next_cursor;
 
                 if (chunk_size == 0) {
-                    // Terminal chunk — consume trailing CRLF
-                    if (cursor + 2 > buffer.size()) return result::incomplete;
-                    cursor += 2;
+                    if (cursor < buffer.size()) {
+                        std::size_t dummy_end = 0;
+                        std::size_t after_crlf = 0;
+                        if (find_next_line(buffer, cursor, dummy_end, after_crlf)) {
+                            cursor = after_crlf;
+                        }
+                    }
                     break;
                 }
 
-                if (cursor + chunk_size + 2 > buffer.size()) return result::incomplete;
-                cursor += chunk_size + 2; // data + trailing CRLF
+                if (cursor + chunk_size > buffer.size()) {
+                    msg.body = buffer.substr(body_start);
+                    bytes_consumed = buffer.size();
+                    return result::success;
+                }
+
+                cursor += chunk_size;
+
+                if (cursor < buffer.size() && buffer[cursor] == '\r') ++cursor;
+                if (cursor < buffer.size() && buffer[cursor] == '\n') ++cursor;
             }
 
             msg.body = buffer.substr(body_start, cursor - body_start);
@@ -548,15 +603,93 @@ namespace wavex::protos::http {
         }
     };
 
+    // ─── Decoder ─────────────────────────────────────────────────────────────────
+
+    /**
+     * @brief HTTP/1.x response decoder and payload de-chunker.
+     */
+    class decoder {
+    public:
+        /**
+         * @brief Decode a raw HTTP/1.x response buffer into a response structure.
+         * @param buffer Raw network response buffer.
+         * @param res Output: populated response structure on success.
+         * @param bytes_consumed Output: bytes consumed from the buffer.
+         * @return parser::result (success, incomplete, error).
+         */
+        [[nodiscard]]
+        static parser::result decode_response(const std::string_view buffer,
+                                             response &res,
+                                             std::size_t &bytes_consumed) {
+            return parser::parse_response(buffer, res, bytes_consumed);
+        }
+
+        /**
+         * @brief Un-chunk a Transfer-Encoding: chunked raw body payload into unchunked bytes.
+         * @param chunked_raw Raw chunked payload.
+         * @return Unchunked decoded body string.
+         */
+        [[nodiscard]]
+        static std::string dechunk(const std::string_view chunked_raw) {
+            std::string unchunked;
+            std::size_t cursor = 0;
+            while (cursor < chunked_raw.size()) {
+                std::size_t line_end = 0;
+                std::size_t next_cursor = 0;
+                if (!parser::find_next_line(chunked_raw, cursor, line_end, next_cursor)) {
+                    if (cursor < chunked_raw.size()) {
+                        unchunked.append(chunked_raw.substr(cursor));
+                    }
+                    break;
+                }
+
+                std::string_view size_sv = chunked_raw.substr(cursor, line_end - cursor);
+                if (const std::size_t semi = size_sv.find(';'); semi != std::string_view::npos) {
+                    size_sv = size_sv.substr(0, semi);
+                }
+                size_sv = detail::strip_ows(size_sv);
+                if (size_sv.empty()) {
+                    cursor = next_cursor;
+                    continue;
+                }
+
+                std::size_t chunk_size = 0;
+                const auto [ptr, ec] = std::from_chars(
+                    size_sv.data(), size_sv.data() + size_sv.size(), chunk_size, 16);
+                if (ec != std::errc{} || chunk_size == 0) {
+                    if (ec != std::errc{} && cursor < chunked_raw.size()) {
+                        unchunked.append(chunked_raw.substr(cursor));
+                    }
+                    break;
+                }
+
+                cursor = next_cursor;
+                if (cursor + chunk_size > chunked_raw.size()) {
+                    unchunked.append(chunked_raw.substr(cursor));
+                    break;
+                }
+
+                unchunked.append(chunked_raw.substr(cursor, chunk_size));
+                cursor += chunk_size;
+
+                if (cursor < chunked_raw.size() && chunked_raw[cursor] == '\r') ++cursor;
+                if (cursor < chunked_raw.size() && chunked_raw[cursor] == '\n') ++cursor;
+            }
+            return unchunked;
+        }
+    };
+
     /**
      * @struct http1codec
-     * @brief HTTP/1.x Protocol Codec combining zero-copy parser and encoder.
+     * @brief HTTP/1.x Protocol Codec combining zero-copy parser, encoder, and decoder.
      */
     struct http1codec {
         using parser = wavex::protos::http::parser;
         using encoder = wavex::protos::http::encoder;
+        using decoder = wavex::protos::http::decoder;
         using request = wavex::protos::http::request;
         using response = wavex::protos::http::response;
     };
 }
+
 

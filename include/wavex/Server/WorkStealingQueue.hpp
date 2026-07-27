@@ -48,9 +48,11 @@ namespace wavex::server {
     public:
         static constexpr std::size_t CAPACITY = 256;
 
-        LocalQueue() : top_(0), bottom_(0) {}
+        LocalQueue() : top_(0), bottom_(0) {
+        }
 
         LocalQueue(const LocalQueue &) = delete;
+
         LocalQueue &operator=(const LocalQueue &) = delete;
 
         /**
@@ -59,10 +61,11 @@ namespace wavex::server {
          */
         [[nodiscard]] bool push(Task task) {
             const std::size_t b = bottom_.load(std::memory_order_relaxed);
-            const std::size_t t = top_.load(std::memory_order_acquire);
 
             // Full check: ring has CAPACITY-1 usable slots to avoid ambiguity.
-            if (b - t >= CAPACITY - 1) return false;
+            if (const std::size_t t = top_.load(std::memory_order_acquire);
+                b - t >= CAPACITY - 1)
+                return false;
 
             slots_[b & MASK] = std::move(task);
             // Release so steal() readers see the fully-written task.
@@ -81,12 +84,11 @@ namespace wavex::server {
             bottom_.store(b, std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_seq_cst);
 
-            std::size_t t = top_.load(std::memory_order_relaxed);
-            if (t <= b) {
+            if (std::size_t t = top_.load(std::memory_order_relaxed); t <= b) {
                 if (t == b) {
                     // Last element in queue — race with a stealing thread.
                     if (!top_.compare_exchange_strong(t, t + 1,
-                            std::memory_order_seq_cst, std::memory_order_relaxed)) {
+                                                      std::memory_order_seq_cst, std::memory_order_relaxed)) {
                         // Lost race to a thief.
                         bottom_.store(b + 1, std::memory_order_relaxed);
                         return std::nullopt;
@@ -109,13 +111,14 @@ namespace wavex::server {
         std::optional<Task> steal() {
             std::size_t t = top_.load(std::memory_order_acquire);
             std::atomic_thread_fence(std::memory_order_seq_cst);
-            const std::size_t b = bottom_.load(std::memory_order_acquire);
 
-            if (t >= b) return std::nullopt; // Empty.
+            if (const std::size_t b = bottom_.load(std::memory_order_acquire);
+                t >= b)
+                return std::nullopt; // Empty.
 
             // CAS first: claim slot t atomically BEFORE moving content
             if (!top_.compare_exchange_strong(t, t + 1,
-                    std::memory_order_seq_cst, std::memory_order_relaxed)) {
+                                              std::memory_order_seq_cst, std::memory_order_relaxed)) {
                 return std::nullopt; // Lost race to another thief
             }
             Task task = std::move(slots_[t & MASK]);
@@ -139,7 +142,7 @@ namespace wavex::server {
         std::vector<Task> drain_all() {
             std::vector<Task> drained;
             while (auto t = pop()) {
-                drained.push_back(std::move(*t));
+                drained.emplace_back(std::move(*t));
             }
             return drained;
         }
@@ -176,6 +179,7 @@ namespace wavex::server {
         InjectorQueue() = default;
 
         InjectorQueue(const InjectorQueue &) = delete;
+
         InjectorQueue &operator=(const InjectorQueue &) = delete;
 
         /// Push a task (any thread).
@@ -222,5 +226,4 @@ namespace wavex::server {
         std::size_t head_ = 0;
         std::atomic<std::size_t> size_{0};
     };
-
 } // namespace wavex::server

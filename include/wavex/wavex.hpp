@@ -13,6 +13,7 @@
 #include <wavex/Engine/Router.hpp>
 #include <wavex/Engine/HttpRouter.hpp>
 #include <wavex/Server/Server.hpp>
+#include <wavex/Client/HttpClient.hpp>
 
 /**
  * @brief Macro representing the current version of the WaveX framework.

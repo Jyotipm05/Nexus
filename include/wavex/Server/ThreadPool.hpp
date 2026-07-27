@@ -24,7 +24,7 @@
 #define ASIO_HAS_CO_AWAIT 1
 #endif
 
-#include <array>
+
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -214,7 +214,7 @@ namespace wavex::server {
             const std::size_t new_id = workers_.size() + 1;
             auto worker = std::make_shared<WorkerNode>(new_id);
             worker->thread = std::thread([this, w = worker] { worker_loop(w); });
-            workers_.push_back(worker);
+            workers_.emplace_back(std::move(worker));
         }
 
         // ── Worker loop ────────────────────────────────────────────────────
@@ -334,7 +334,7 @@ namespace wavex::server {
             }
         }
 
-        void decommission_worker(std::shared_ptr<WorkerNode> retiring) {
+        static void decommission_worker(const std::shared_ptr<WorkerNode> &retiring) {
             retiring->is_retiring = true;
             retiring->stop_requested = true;
 

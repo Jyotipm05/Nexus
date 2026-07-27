@@ -129,6 +129,7 @@ add_library(wavex
         src/Base/Uri.cpp
         src/Base/Url.cpp
         src/Engine/Router.cpp
+        src/Client/HttpClient.cpp
 )
 
 target_include_directories(wavex PUBLIC
@@ -174,6 +175,7 @@ target_sources(wavex
         include/wavex/Server/WorkStealingQueue.hpp
         include/wavex/Server/ThreadPool.hpp
         include/wavex/Server/Server.hpp
+        include/wavex/Client/HttpClient.hpp
 )
 
 # C++ Modules
@@ -194,6 +196,7 @@ target_sources(wavex
         src/Server/WorkStealingQueue.ixx
         src/Server/ThreadPool.ixx
         src/Base/MiddleWare.ixx
+        src/Client/HttpClient.ixx
 )
 
 # ===========================================================================
@@ -243,6 +246,13 @@ if (WAVEX_TEST)
     add_executable(wavex_server_tests tests/test_server.cpp)
     target_link_libraries(wavex_server_tests PRIVATE wavex)
     add_test(NAME ServerTests COMMAND wavex_server_tests)
+
+    add_executable(wavex_client_tests tests/test_client.cpp)
+    target_compile_definitions(wavex_client_tests PRIVATE
+            PROJECT_DIR="${CMAKE_SOURCE_DIR}"
+    )
+    target_link_libraries(wavex_client_tests PRIVATE wavex)
+    add_test(NAME ClientTests COMMAND wavex_client_tests)
 
     # Interactive dev/Postman manual testing server
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)

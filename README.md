@@ -155,9 +155,10 @@ graph LR
 | `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with lock-free atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
 | `Server/Server` | ✅ Complete | Coroutine TCP server with master acceptor & slave worker pool |
-| `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser & encoder |
-| `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request owning receive buffer |
-| `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket pointer writing |
+| `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder & response decoder |
+| `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request for server parsing & client builder |
+| `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket writing & client parsing |
+| `Client/HttpClient` | ✅ Complete | Async coroutine HTTP client for calling 3rd-party services (`get`, `post`, `send`) |
 
 ---
 

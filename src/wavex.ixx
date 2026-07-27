@@ -16,6 +16,7 @@ export import :middleware;
 export import :router;
 export import :http_router;
 export import :server;
+export import :client;
 
 export namespace wavex {
     using wavex::_version;

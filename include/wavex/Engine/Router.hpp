@@ -166,7 +166,7 @@ namespace wavex::engine {
          * @param mw Middleware function to add to the global chain.
          */
         void use(base::MiddlewareFn mw) {
-            middlewares_.push_back(ScopedMiddleware{"", std::move(mw)});
+            middlewares_.emplace_back("", std::move(mw));
         }
 
         /**
@@ -178,9 +178,9 @@ namespace wavex::engine {
          */
         void use(const std::string_view prefix, base::MiddlewareFn mw) {
             if (prefix.empty()) [[unlikely]] {
-                middlewares_.push_back(ScopedMiddleware{"", std::move(mw)});
+                middlewares_.emplace_back("", std::move(mw));
             } else [[likely]] {
-                middlewares_.push_back(ScopedMiddleware{normalize_path(prefix), std::move(mw)});
+                middlewares_.emplace_back(normalize_path(prefix), std::move(mw));
             }
         }
 
@@ -221,7 +221,7 @@ namespace wavex::engine {
 
             for (const auto &[prefix, fn]: middlewares_) {
                 if (prefix.empty() || normalized.starts_with(prefix)) {
-                    chain.push_back(fn);
+                    chain.emplace_back(fn);
                 }
             }
 
@@ -357,8 +357,8 @@ namespace wavex::engine {
             while (start < path.size()) {
                 size_t end = path.find('/', start);
                 if (end == std::string_view::npos) end = path.size();
-                if (end > start) {
-                    segments.push_back(path.substr(start, end - start));
+                if (end != start) {
+                    segments.emplace_back(path.substr(start, end - start));
                 }
                 start = end + 1;
             }
@@ -398,7 +398,7 @@ namespace wavex::engine {
                 new_node->is_param = true;
                 new_node->param_name = pname;
                 Node *res = new_node.get();
-                parent->param_children.push_back(std::move(new_node));
+                parent->param_children.emplace_back(std::move(new_node));
                 return res;
             }
 
@@ -428,7 +428,7 @@ namespace wavex::engine {
                         new_node->constraint = cached;
                     }
                     Node *res = new_node.get();
-                    parent->param_children.push_back(std::move(new_node));
+                    parent->param_children.emplace_back(std::move(new_node));
                     return res;
                 }
                 // Unconstrained brace param: {name} (works identically to :name)
@@ -442,7 +442,7 @@ namespace wavex::engine {
                 new_node->is_param = true;
                 new_node->param_name = pname;
                 Node *res = new_node.get();
-                parent->param_children.push_back(std::move(new_node));
+                parent->param_children.emplace_back(std::move(new_node));
                 return res;
             }
 
@@ -466,7 +466,7 @@ namespace wavex::engine {
             Node *res = new_node.get();
             // Index by a view into the child's own storage (see Node comment).
             parent->static_index.emplace(std::string_view(new_node->prefix), res);
-            parent->children.push_back(std::move(new_node));
+            parent->children.emplace_back(std::move(new_node));
             return res;
         }
 
