@@ -28,9 +28,9 @@ namespace wavex::engine {
      */
     class HttpRouter : public Router<HttpProto> {
     public:
-        using Router<HttpProto>::route;
-        using Router<HttpProto>::use;
-        using Router<HttpProto>::resolve;
+        using Router::route;
+        using Router::use;
+        using Router::resolve;
 
         /// Singleton instance getter for HttpRouter.
         static HttpRouter &instance() {

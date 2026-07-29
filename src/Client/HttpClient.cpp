@@ -81,7 +81,8 @@ namespace wavex::client {
         }
 
         asio::error_code ignore_ec;
-        socket.close(ignore_ec);
+        std::ignore = socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+        std::ignore = socket.close(ignore_ec);
 
         // Use std::move to invoke the move ctor (which preserves
         // string_view validity via heap-pointer transfer) instead of

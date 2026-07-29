@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <wavex/Base/MimeTypes.hpp>
 #include <wavex/protos/protos.hpp>
 #include <wavex/protos/http/HttpResponse.hpp>
 #include <wavex/Engine/Router.hpp>

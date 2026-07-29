@@ -105,7 +105,7 @@ namespace wavex::server {
         }
 
         /**
-         * @brief Thief-only: steal a task from the front (FIFO).
+         * @brief Thief-only: steal a single task from the front (FIFO).
          * @return The stolen task, or std::nullopt if empty or lost race.
          */
         std::optional<Task> steal() {
@@ -123,6 +123,42 @@ namespace wavex::server {
             }
             Task task = std::move(slots_[t & MASK]);
             return task;
+        }
+
+        /**
+         * @brief Thief-only: steal half of the tasks from this queue into dest_queue (batch stealing).
+         * @param dest_queue The thief thread's own LocalQueue to push stolen batch into.
+         * @return A task to execute immediately by the thief, or std::nullopt if empty or lost race.
+         */
+        std::optional<Task> steal_half(LocalQueue &dest_queue) {
+            std::size_t t = top_.load(std::memory_order_acquire);
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+
+            const std::size_t b = bottom_.load(std::memory_order_acquire);
+            if (t >= b) return std::nullopt; // Empty.
+
+            const std::size_t num_tasks = b - t;
+            // Steal half of the available tasks (at least 1 task)
+            const std::size_t steal_count = (num_tasks + 1) / 2;
+
+            // Atomically reserve slots [t, t + steal_count)
+            if (!top_.compare_exchange_strong(t, t + steal_count,
+                                              std::memory_order_seq_cst, std::memory_order_relaxed)) {
+                return std::nullopt; // Lost race to another thief
+            }
+
+            // 1 task to return to thief for immediate execution
+            Task first_task = std::move(slots_[t & MASK]);
+
+            // Remaining (steal_count - 1) tasks are pushed into dest_queue (the thief's local queue)
+            for (std::size_t i = 1; i < steal_count; ++i) {
+                if (Task remaining_task = std::move(slots_[(t + i) & MASK]); !dest_queue.push(std::move(remaining_task))) {
+                    // If thief's local queue overflows, remaining tasks are dropped/spilled
+                    break;
+                }
+            }
+
+            return first_task;
         }
 
         /// Approximate size (may race; used for load metrics only).

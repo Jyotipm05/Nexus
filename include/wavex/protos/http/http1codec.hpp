@@ -246,7 +246,7 @@ namespace wavex::protos::http {
          * @param bytes_consumed Output: how many bytes of buffer were consumed.
          */
         [[nodiscard]]
-        static result parse_request(std::string_view buffer,
+        static result parse_request(const std::string_view buffer,
                                     request &req,
                                     std::size_t &bytes_consumed) {
             bytes_consumed = 0;
@@ -287,7 +287,7 @@ namespace wavex::protos::http {
          * @brief Parse a raw buffer into an HTTP response.
          */
         [[nodiscard]]
-        static result parse_response(std::string_view buffer,
+        static result parse_response(const std::string_view buffer,
                                      response &res,
                                      std::size_t &bytes_consumed) {
             bytes_consumed = 0;
@@ -340,7 +340,7 @@ namespace wavex::protos::http {
          * log₂(n) reallocation chain for standard HTTP messages.
          * Also strips OWS per RFC 7230 §3.2.3 (SP and HTAB, not just SP).
          */
-        static result parse_headers(std::string_view buffer,
+        static result parse_headers(const std::string_view buffer,
                                     std::size_t &cursor,
                                     std::vector<header> &headers) {
             headers.reserve(16);
@@ -420,19 +420,18 @@ namespace wavex::protos::http {
          * Walks chunk framing to find bytes_consumed, then sets msg.body to the
          * raw chunked region. Callers that need de-chunked data must post-process.
          */
-        static result extract_chunked_body(std::string_view buffer,
+        static result extract_chunked_body(const std::string_view buffer,
                                            std::size_t cursor,
                                            message_base &msg,
                                            std::size_t &bytes_consumed) {
             const std::size_t body_start = cursor;
+            bool terminal_reached = false;
 
             while (cursor < buffer.size()) {
                 std::size_t line_end = 0;
                 std::size_t next_cursor = 0;
                 if (!find_next_line(buffer, cursor, line_end, next_cursor)) {
-                    msg.body = buffer.substr(body_start);
-                    bytes_consumed = buffer.size();
-                    return result::success;
+                    return result::incomplete;
                 }
 
                 std::string_view size_sv = buffer.substr(cursor, line_end - cursor);
@@ -450,34 +449,33 @@ namespace wavex::protos::http {
                 const auto [ptr, ec] = std::from_chars(
                     size_sv.data(), size_sv.data() + size_sv.size(), chunk_size, 16);
                 if (ec != std::errc{}) {
-                    msg.body = buffer.substr(body_start);
-                    bytes_consumed = buffer.size();
-                    return result::success;
+                    return result::error;
                 }
 
                 cursor = next_cursor;
 
                 if (chunk_size == 0) {
                     if (cursor < buffer.size()) {
-                        std::size_t dummy_end = 0;
-                        std::size_t after_crlf = 0;
-                        if (find_next_line(buffer, cursor, dummy_end, after_crlf)) {
+                        if (std::size_t dummy_end = 0, after_crlf = 0; find_next_line(buffer, cursor, dummy_end, after_crlf)) {
                             cursor = after_crlf;
                         }
                     }
+                    terminal_reached = true;
                     break;
                 }
 
                 if (cursor + chunk_size > buffer.size()) {
-                    msg.body = buffer.substr(body_start);
-                    bytes_consumed = buffer.size();
-                    return result::success;
+                    return result::incomplete;
                 }
 
                 cursor += chunk_size;
 
                 if (cursor < buffer.size() && buffer[cursor] == '\r') ++cursor;
                 if (cursor < buffer.size() && buffer[cursor] == '\n') ++cursor;
+            }
+
+            if (!terminal_reached) {
+                return result::incomplete;
             }
 
             msg.body = buffer.substr(body_start, cursor - body_start);
@@ -600,6 +598,36 @@ namespace wavex::protos::http {
             out += "\r\n";
             out += req.body;
             return out;
+        }
+
+        /**
+         * @brief Format a single chunk framing header: "size_hex\r\n".
+         */
+        static std::string format_chunk_header(const std::size_t chunk_size) {
+            char hex_buf[32];
+            const auto [ptr, ec] = std::to_chars(hex_buf, hex_buf + sizeof(hex_buf), chunk_size, 16);
+            std::string out(hex_buf, ptr);
+            out += "\r\n";
+            return out;
+        }
+
+        /**
+         * @brief Format a complete HTTP chunk: "size_hex\r\ndata\r\n".
+         */
+        static std::string format_chunk(const std::string_view data) {
+            if (data.empty()) return "0\r\n\r\n";
+            std::string out = format_chunk_header(data.size());
+            out.reserve(out.size() + data.size() + 2);
+            out += data;
+            out += "\r\n";
+            return out;
+        }
+
+        /**
+         * @brief Terminal HTTP chunk signaling end of chunked stream: "0\r\n\r\n".
+         */
+        [[nodiscard]] static constexpr std::string_view format_terminal_chunk() noexcept {
+            return "0\r\n\r\n";
         }
     };
 

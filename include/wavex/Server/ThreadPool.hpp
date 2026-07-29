@@ -243,7 +243,7 @@ namespace wavex::server {
                         for (std::size_t i = 0; i < n; ++i) {
                             auto &other = workers_[(start + i) % n];
                             if (other->id != w->id) {
-                                if (auto stolen = other->queue->steal()) {
+                                if (auto stolen = other->queue->steal_half(*w->queue)) {
                                     w->is_busy = true;
                                     (*stolen)();
                                     w->is_busy = false;

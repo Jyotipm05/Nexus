@@ -109,6 +109,40 @@ void test_work_stealing_queue() {
     check(inj_counter == 3, "InjectorQueue FIFO: second task (+2)");
     if (auto t = inj.pop()) (*t)();
     check(inj_counter == 6, "InjectorQueue FIFO: third task (+3)");
+
+    std::cout << "\n[Test 2c] LocalQueue steal_half (half-batch work stealing)\n";
+    wavex::server::LocalQueue victim_lq;
+    wavex::server::LocalQueue thief_lq;
+
+    int batch_sum = 0;
+    for (int i = 1; i <= 10; ++i) {
+        (void)victim_lq.push([&batch_sum, i] { batch_sum += i; });
+    }
+    check(victim_lq.size() == 10, "Victim LocalQueue initialized with 10 tasks");
+    check(thief_lq.empty(), "Thief LocalQueue starts empty");
+
+    // Thief steals half from victim (steal_count = (10 + 1) / 2 = 5)
+    auto immediate_stolen = victim_lq.steal_half(thief_lq);
+    check(immediate_stolen.has_value(), "steal_half returned 1 task for immediate execution");
+    if (immediate_stolen) (*immediate_stolen)();
+    check(batch_sum == 1, "Immediate stolen task 1 executed (+1)");
+
+    check(victim_lq.size() == 5, "Victim LocalQueue size reduced from 10 to 5");
+    check(thief_lq.size() == 4, "Thief LocalQueue populated with 4 stolen batch tasks");
+
+    // Thief pops remaining 4 batch tasks from its own queue
+    while (auto t = thief_lq.pop()) {
+        (*t)();
+    }
+    check(thief_lq.empty(), "Thief LocalQueue drained");
+
+    // Victim pops its remaining 5 tasks
+    while (auto t = victim_lq.pop()) {
+        (*t)();
+    }
+    check(victim_lq.empty(), "Victim LocalQueue drained");
+
+    check(batch_sum == 55, "All 10 tasks executed correctly across victim and thief (sum == 55)");
     check(inj.empty(), "InjectorQueue empty after all pops");
 }
 

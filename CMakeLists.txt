@@ -166,6 +166,7 @@ target_sources(wavex
         BASE_DIRS include
         FILES
         include/wavex/Base/MiddleWare.hpp
+        include/wavex/Base/MimeTypes.hpp
         include/wavex/Engine/Router.hpp
         include/wavex/Engine/HttpRouter.hpp
         include/wavex/protos/http/Methods.hpp
@@ -253,6 +254,10 @@ if (WAVEX_TEST)
     )
     target_link_libraries(wavex_client_tests PRIVATE wavex)
     add_test(NAME ClientTests COMMAND wavex_client_tests)
+
+    add_executable(wavex_server_chunked_tests tests/test_server_chunked.cpp)
+    target_link_libraries(wavex_server_chunked_tests PRIVATE wavex)
+    add_test(NAME ServerChunkedTests COMMAND wavex_server_chunked_tests)
 
     # Interactive dev/Postman manual testing server
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)
