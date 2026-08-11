@@ -16,24 +16,30 @@
 namespace wavex::base {
     /**
      * @class Request
-     * @brief Protocol-agnostic request base class.
+     * @brief Protocol-agnostic CRTP request base class (zero-vtable overhead).
      *
-     * Concrete protocol implementations (HTTP, MCP, etc.) override the pure
-     * virtual accessors. The router populates `params` and `query` during
-     * route resolution.
+     * Concrete protocol implementations (HttpRequest, etc.) inherit via CRTP:
+     * `class HttpRequest final : public base::Request<HttpRequest>`.
      */
+    template <typename Derived>
     class Request {
     public:
-        virtual ~Request() = default;
+        ~Request() = default;
 
         /// The request path/target, e.g. "/user/123"
-        [[nodiscard]] virtual std::string_view path() const = 0;
+        [[nodiscard]] std::string_view path() const {
+            return static_cast<const Derived *>(this)->path_impl();
+        }
 
         /// Retrieve a header by name (case-insensitive for HTTP)
-        [[nodiscard]] virtual std::optional<std::string_view> header(std::string_view name) const = 0;
+        [[nodiscard]] std::optional<std::string_view> header(const std::string_view name) const {
+            return static_cast<const Derived *>(this)->header_impl(name);
+        }
 
         /// The request body
-        [[nodiscard]] virtual std::string_view body() const = 0;
+        [[nodiscard]] std::string_view body() const {
+            return static_cast<const Derived *>(this)->body_impl();
+        }
 
         /// Path parameters populated by the router (e.g. :id -> "123")
         std::unordered_map<std::string, std::string> params;

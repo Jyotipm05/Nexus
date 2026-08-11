@@ -18,25 +18,27 @@
 
 #include <asio/awaitable.hpp>
 
-// Forward declarations to avoid circular includes
+// Forward declarations of CRTP base templates
 namespace wavex::base {
+    template <typename Derived>
     class Request;
-    class Response;
-}
 
-namespace wavex::base {
+    template <typename Derived>
+    class Response;
+
     /// Callable that invokes the next middleware or the final handler
     using Next = std::function<asio::awaitable<void>()>;
 
     /**
-     * @brief Middleware function signature.
+     * @brief Generic middleware function signature for CRTP Request and Response types.
      *
      * Usage:
-     *   auto logger = [](Request& req, Response& res, Next next) -> asio::awaitable<void> {
+     *   auto logger = [](ReqT &req, ResT &res, Next next) -> asio::awaitable<void> {
      *       WX_LOG_INFO("-> {}", req.path());
      *       co_await next();
      *       WX_LOG_INFO("<- {} {}", res.status_code(), req.path());
      *   };
      */
-    using MiddlewareFn = std::function<asio::awaitable<void>(Request &, Response &, Next)>;
+    template <typename ReqT, typename ResT>
+    using GenericMiddlewareFn = std::function<asio::awaitable<void>(ReqT &, ResT &, Next)>;
 } // namespace wavex::base

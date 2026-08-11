@@ -10,16 +10,20 @@
 
 #include <wavex/Engine/Router.hpp>
 #include <wavex/protos/http/Methods.hpp>
+#include <wavex/protos/http/HttpRequest.hpp>
+#include <wavex/protos/http/HttpResponse.hpp>
 
 #undef DELETE
 
 namespace wavex::engine {
     /**
      * @struct HttpProto
-     * @brief Protocol adapter for HTTP — provides the method type.
+     * @brief Protocol adapter for HTTP — provides the method, request, and response types.
      */
     struct HttpProto {
         using method = protos::http::method;
+        using request = protos::http::HttpRequest;
+        using response = protos::http::HttpResponse;
     };
 
     /**
@@ -78,35 +82,35 @@ namespace wavex::engine {
         //  Registration with per-route middlewares
         // ---------------------------------------------------------------
 
-        void get(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void get(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::GET, pattern, std::move(mws), std::move(h));
         }
 
-        void post(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void post(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::POST, pattern, std::move(mws), std::move(h));
         }
 
-        void put(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void put(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::PUT, pattern, std::move(mws), std::move(h));
         }
 
-        void del(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void del(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::DELETE, pattern, std::move(mws), std::move(h));
         }
 
-        void head(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void head(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::HEAD, pattern, std::move(mws), std::move(h));
         }
 
-        void options(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void options(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::OPTIONS, pattern, std::move(mws), std::move(h));
         }
 
-        void patch(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void patch(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::PATCH, pattern, std::move(mws), std::move(h));
         }
 
-        void query(const std::string_view pattern, std::vector<base::MiddlewareFn> mws, Handler h) {
+        void query(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::QUERY, pattern, std::move(mws), std::move(h));
         }
     };

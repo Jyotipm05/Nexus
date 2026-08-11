@@ -49,38 +49,43 @@
 #include <asio/awaitable.hpp>
 
 namespace wavex::engine {
-    // Handler signature — all handlers are coroutine-based
-    using Handler = std::function<asio::awaitable<void>(base::Request &, base::Response &)>;
-
-    /**
-     * @struct RouteMatch
-     * @brief Result of a successful route resolution.
-     */
-    struct RouteMatch {
-        Handler handler;
-        std::vector<base::MiddlewareFn> middlewares; // full chain for this route
-        std::unordered_map<std::string, std::string> params;
-    };
-
-    /**
-     * @struct ScopedMiddleware
-     * @brief A middleware bound to a path prefix.
-     */
-    struct ScopedMiddleware {
-        std::string prefix;
-        base::MiddlewareFn fn;
-    };
-
     /**
      * @class Router
      * @brief Protocol-agnostic radix-tree router.
      *
-     * @tparam Proto Protocol type. Must have a nested `method` enum class.
+     * @tparam Proto Protocol type. Must have nested `method`, `request`, and `response` types.
      */
     template<typename Proto>
     class Router {
     public:
-        using MethodType = Proto::method;
+        using MethodType = typename Proto::method;
+        using RequestType = typename Proto::request;
+        using ResponseType = typename Proto::response;
+
+        /// Handler signature for this router's protocol
+        using Handler = std::function<asio::awaitable<void>(RequestType &, ResponseType &)>;
+
+        /// Middleware function signature for this router's protocol
+        using MiddlewareFn = base::GenericMiddlewareFn<RequestType, ResponseType>;
+
+        /**
+         * @struct RouteMatch
+         * @brief Result of a successful route resolution.
+         */
+        struct RouteMatch {
+            Handler handler;
+            std::vector<MiddlewareFn> middlewares; // full chain for this route
+            std::unordered_map<std::string, std::string> params;
+        };
+
+        /**
+         * @struct ScopedMiddleware
+         * @brief A middleware bound to a path prefix.
+         */
+        struct ScopedMiddleware {
+            std::string prefix;
+            MiddlewareFn fn;
+        };
 
         /**
          * @brief Constructs an empty router with a single root node at "/".
@@ -134,7 +139,7 @@ namespace wavex::engine {
          * @param h Coroutine handler invoked on a match.
          */
         void route(MethodType m, const std::string_view pattern,
-                   std::vector<base::MiddlewareFn> mws, Handler h) {
+                   std::vector<MiddlewareFn> mws, Handler h) {
             // Normalise + split without allocating for the common case of an
             // already-well-formed literal pattern (e.g. "/api/users/:id").
             // `insert_segment` only allocates an owned std::string when it
@@ -165,7 +170,7 @@ namespace wavex::engine {
          * @brief Registers a global middleware, applied to all routes.
          * @param mw Middleware function to add to the global chain.
          */
-        void use(base::MiddlewareFn mw) {
+        void use(MiddlewareFn mw) {
             middlewares_.emplace_back("", std::move(mw));
         }
 
@@ -176,7 +181,7 @@ namespace wavex::engine {
          *        like the global overload.
          * @param mw Middleware function to add to the chain.
          */
-        void use(const std::string_view prefix, base::MiddlewareFn mw) {
+        void use(const std::string_view prefix, MiddlewareFn mw) {
             if (prefix.empty()) [[unlikely]] {
                 middlewares_.emplace_back("", std::move(mw));
             } else [[likely]] {
@@ -216,7 +221,7 @@ namespace wavex::engine {
 
             // Build the full middleware chain:
             // [global] -> [scoped by prefix] -> [per-route] -> handler
-            std::vector<base::MiddlewareFn> chain;
+            std::vector<MiddlewareFn> chain;
             chain.reserve(middlewares_.size() + route_mw_count);
 
             for (const auto &[prefix, fn]: middlewares_) {
@@ -253,7 +258,7 @@ namespace wavex::engine {
             std::string param_name; // extracted parameter name
 
             std::unordered_map<MethodType, Handler> handlers{};
-            std::unordered_map<MethodType, std::vector<base::MiddlewareFn> > route_middlewares{};
+            std::unordered_map<MethodType, std::vector<MiddlewareFn> > route_middlewares{};
 
             std::vector<std::unique_ptr<Node> > children{}; // static children (ownership)
             // O(1)-average dispatch index for static children. Keys are

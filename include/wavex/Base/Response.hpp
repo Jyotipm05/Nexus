@@ -19,46 +19,46 @@
 namespace wavex::base {
     /**
      * @class Response
-     * @brief Protocol-agnostic response builder with fluent API.
+     * @brief Protocol-agnostic CRTP response builder with fluent API (zero-vtable overhead).
      *
-     * Concrete protocol implementations override serialize() to produce
-     * the wire format (e.g., HTTP/1.1 status line + headers + body).
+     * Concrete protocol implementations inherit via CRTP:
+     * `class HttpResponse final : public base::Response<HttpResponse>`.
      */
+    template <typename Derived>
     class Response {
     public:
-        virtual ~Response() = default;
+        ~Response() = default;
 
         /// Set the response status code
-        Response &status(const unsigned int code) {
+        Derived &status(const unsigned int code) {
             status_code_ = code;
-            return *this;
+            return static_cast<Derived &>(*this);
         }
 
         /// Set a response header (appends; does not deduplicate)
-        Response &set(const std::string_view name, const std::string_view value) {
+        Derived &set(const std::string_view name, const std::string_view value) {
             headers_.emplace_back(std::string(name), std::string(value));
-            return *this;
+            return static_cast<Derived &>(*this);
         }
 
         /// Returns true if the response has already been sent
         [[nodiscard]] bool is_sent() const { return is_sent_; }
 
         /// Set the response body as plain text and mark as sent
-        virtual Response &send(const std::string_view body) {
-            if (is_sent_) return *this;
-            body_ = std::string(body);
-            is_sent_ = true;
-            return *this;
+        Derived &send(const std::string_view body) {
+            return static_cast<Derived *>(this)->send_impl(body);
         }
 
         /// Set the response body as JSON — sets Content-Type automatically
-        virtual Response &json(const nlohmann::json &j) {
+        Derived &json(const nlohmann::json &j) {
             set("Content-Type", "application/json");
             return send(j.dump());
         }
 
         /// Serialize the response into the wire format (protocol-specific)
-        [[nodiscard]] virtual std::string serialize() const = 0;
+        [[nodiscard]] std::string serialize() const {
+            return static_cast<const Derived *>(this)->serialize_impl();
+        }
 
         /// Access the current status code
         [[nodiscard]] unsigned int status_code() const { return status_code_; }

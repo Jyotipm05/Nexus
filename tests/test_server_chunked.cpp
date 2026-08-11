@@ -73,8 +73,7 @@ void test_server_streaming_and_files() {
     wavex::engine::HttpRouter router;
 
     // 1. Chunked Stream Route
-    router.get("/stream", [](wavex::base::Request &, wavex::base::Response &b_res) -> asio::awaitable<void> {
-        auto &res = dynamic_cast<wavex::protos::http::HttpResponse &>(b_res);
+    router.get("/stream", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         (void)co_await res.start_chunked();
         (void)co_await res.write_chunk("Part 1: Hello ");
         (void)co_await res.write_chunk("Part 2: WaveX!");
@@ -82,14 +81,12 @@ void test_server_streaming_and_files() {
     });
 
     // 2. Auto MIME File Route
-    router.get("/download_html", [html_file](wavex::base::Request &, wavex::base::Response &b_res) -> asio::awaitable<void> {
-        auto &res = dynamic_cast<wavex::protos::http::HttpResponse &>(b_res);
+    router.get("/download_html", [html_file](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         (void)co_await res.send_file(html_file.string());
     });
 
     // 3. Custom MIME File Route
-    router.get("/download_custom", [bin_file](wavex::base::Request &, wavex::base::Response &b_res) -> asio::awaitable<void> {
-        auto &res = dynamic_cast<wavex::protos::http::HttpResponse &>(b_res);
+    router.get("/download_custom", [bin_file](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         (void)co_await res.send_file(bin_file.string(), "application/x-wavex-custom");
     });
 

@@ -27,15 +27,17 @@
 
 // ─── Minimal concrete stubs for testing ──────────────────────────────────────
 
-struct [[maybe_unused]] TestRequest final : wavex::base::Request {
+// ─── Minimal concrete stubs for testing ──────────────────────────────────────
+
+struct [[maybe_unused]] TestRequest final : wavex::base::Request<TestRequest> {
     std::string path_val;
-    [[nodiscard]] std::string_view path() const override { return path_val; }
-    [[nodiscard]] std::optional<std::string_view> header(std::string_view) const override { return std::nullopt; }
-    [[nodiscard]] std::string_view body() const override { return {}; }
+    [[nodiscard]] std::string_view path_impl() const { return path_val; }
+    [[nodiscard]] std::optional<std::string_view> header_impl(std::string_view) const { return std::nullopt; }
+    [[nodiscard]] std::string_view body_impl() const { return {}; }
 };
 
-struct [[maybe_unused]] TestResponse final : wavex::base::Response {
-    [[nodiscard]] std::string serialize() const override {
+struct [[maybe_unused]] TestResponse final : wavex::base::Response<TestResponse> {
+    [[nodiscard]] std::string serialize_impl() const {
         return "HTTP/1.1 " + std::to_string(status_code_) + "\r\n\r\n" + body_;
     }
 };
@@ -65,14 +67,14 @@ void run_sync(Coro coro) {
 }
 
 /// Helper function to execute a handler and return the resulting response body string
-std::string execute_handler(const wavex::engine::Handler &h) {
-    TestRequest req;
-    TestResponse res;
+std::string execute_handler(const wavex::engine::HttpRouter::Handler &h) {
+    wavex::protos::http::HttpRequest req;
+    wavex::protos::http::HttpResponse res;
     run_sync(h(req, res));
     return res.get_body();
 }
 
-asio::awaitable<void> dummy_handler(wavex::base::Request &, wavex::base::Response &res) {
+asio::awaitable<void> dummy_handler(wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) {
     res.status(200).send("OK");
     co_return;
 }
@@ -84,38 +86,38 @@ void test_static_routes() {
     wavex::engine::HttpRouter router;
 
     // Register distinct handlers for different HTTP methods on the EXACT SAME PATH
-    router.get("/api/v1/resource", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/v1/resource", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("GET_RESOURCE_BODY");
         co_return;
     });
 
-    router.post("/api/v1/resource", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.post("/api/v1/resource", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(201).send("POST_RESOURCE_BODY");
         co_return;
     });
 
-    router.put("/api/v1/resource", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.put("/api/v1/resource", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("PUT_RESOURCE_BODY");
         co_return;
     });
 
-    router.del("/api/v1/resource", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.del("/api/v1/resource", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(204).send("DELETE_RESOURCE_BODY");
         co_return;
     });
 
-    router.patch("/api/v1/resource", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.patch("/api/v1/resource", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("PATCH_RESOURCE_BODY");
         co_return;
     });
 
     // Register distinct handlers for DIFFERENT PATHS under the same prefix
-    router.get("/api/v1/health", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/v1/health", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("HEALTH_OK_BODY");
         co_return;
     });
 
-    router.get("/api/v1/users", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/v1/users", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("USERS_LIST_BODY");
         co_return;
     });
@@ -183,7 +185,7 @@ void test_singleton_instance() {
     check(&router1 == &router2, "HttpRouter::instance() returns reference to exact same singleton");
 
     router1.clear();
-    router1.get("/singleton/test", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router1.get("/singleton/test", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("SINGLETON_RESPONSE");
         co_return;
     });
@@ -203,12 +205,12 @@ void test_path_parameters() {
     std::cout << "\n[Test 3] Dynamic path parameters (:id, {name})\n";
     wavex::engine::HttpRouter router;
 
-    router.get("/users/:id/profile/:section", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/users/:id/profile/:section", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("PROFILE_SECTION_OK");
         co_return;
     });
 
-    router.get("/posts/{category}/{slug}", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/posts/{category}/{slug}", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("POST_CATEGORY_OK");
         co_return;
     });
@@ -237,7 +239,7 @@ void test_regex_constraints() {
     std::cout << "\n[Test 4] RE2 regex constraints {id:\\d+}\n";
     wavex::engine::HttpRouter router;
 
-    router.get("/items/{id:\\d+}", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/items/{id:\\d+}", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("NUMERIC_ITEM_OK");
         co_return;
     });
@@ -259,7 +261,7 @@ void test_wildcards() {
     std::cout << "\n[Test 5] Wildcard parameter matching (*, *filepath)\n";
     wavex::engine::HttpRouter router;
 
-    router.get("/static/*filepath", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/static/*filepath", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("STATIC_FILE_OK");
         co_return;
     });
@@ -281,24 +283,24 @@ void test_middleware_chain() {
     std::vector<std::string> order;
 
     // Global MW
-    router.use([&order](wavex::base::Request &, wavex::base::Response &, const wavex::base::Next next) -> asio::awaitable<void> {
+    router.use([&order](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &, const wavex::base::Next next) -> asio::awaitable<void> {
         order.push_back("global");
         co_await next();
     });
 
     // Scoped MW for /api
-    router.use("/api", [&order](wavex::base::Request &, wavex::base::Response &, const wavex::base::Next next) -> asio::awaitable<void> {
+    router.use("/api", [&order](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &, const wavex::base::Next next) -> asio::awaitable<void> {
         order.push_back("scoped_api");
         co_await next();
     });
 
     // Per-route MW
-    wavex::base::MiddlewareFn route_mw = [&order](wavex::base::Request &, wavex::base::Response &, const wavex::base::Next next) -> asio::awaitable<void> {
+    wavex::engine::HttpRouter::MiddlewareFn route_mw = [&order](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &, const wavex::base::Next next) -> asio::awaitable<void> {
         order.push_back("per_route");
         co_await next();
     };
 
-    router.get("/api/v1/test", {route_mw}, [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/v1/test", {route_mw}, [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("MW_TEST_OK");
         co_return;
     });

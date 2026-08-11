@@ -23,7 +23,7 @@ namespace wavex::protos::http {
      * @class HttpRequest
      * @brief HTTP/1.x request — supports both server-side parsing and client-side creation.
      */
-    class HttpRequest final : public base::Request {
+    class HttpRequest final : public base::Request<HttpRequest> {
     public:
         HttpRequest() = default;
 
@@ -32,7 +32,6 @@ namespace wavex::protos::http {
             : buffer_(std::move(buffer)) {
         }
 
-        /// Construct with method and target URL/path (client side).
         /// Construct with method and target URL/path (client side).
         HttpRequest(const http::method m, const std::string_view target) {
             parsed_.method_type = m;
@@ -76,7 +75,7 @@ namespace wavex::protos::http {
             return *this;
         }
 
-        // ── Accessors ───────────────────────────────────────────────────────
+        // ── Accessors (CRTP Implementations) ────────────────────────────────
 
         [[nodiscard]] http::method method_type() const { return parsed_.method_type; }
 
@@ -84,13 +83,13 @@ namespace wavex::protos::http {
             return raw_target_owned_.empty() ? parsed_.target : std::string_view(raw_target_owned_);
         }
 
-        [[nodiscard]] std::string_view path() const override { return path_; }
+        [[nodiscard]] std::string_view path_impl() const { return path_; }
 
-        [[nodiscard]] std::optional<std::string_view> header(const std::string_view name) const override {
+        [[nodiscard]] std::optional<std::string_view> header_impl(const std::string_view name) const {
             return parsed_.get_header(name);
         }
 
-        [[nodiscard]] std::string_view body() const override { return parsed_.body; }
+        [[nodiscard]] std::string_view body_impl() const { return parsed_.body; }
 
         /**
          * @brief Serialize this HTTP request into HTTP/1.1 wire format.

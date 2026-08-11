@@ -37,13 +37,13 @@ namespace wavex::protos::http {
      * @class HttpResponse
      * @brief HTTP implementation of base::Response with fluent API and zero-copy view storage.
      */
-    class HttpResponse final : public base::Response {
+    class HttpResponse final : public base::Response<HttpResponse> {
     public:
         HttpResponse() = default;
 
         explicit HttpResponse(asio::ip::tcp::socket *socket) : socket_(socket) {}
 
-        ~HttpResponse() override = default;
+        ~HttpResponse() = default;
 
         /**
          * @brief Copy constructor — deep-copies backing stores and rebases all
@@ -57,7 +57,7 @@ namespace wavex::protos::http {
          * copy the response through co_return.
          */
         HttpResponse(const HttpResponse &other)
-            : base::Response(other),
+            : base::Response<HttpResponse>(other),
               socket_(other.socket_),
               buffer_owner_(other.buffer_owner_),
               dechunked_body_storage_(other.dechunked_body_storage_),
@@ -154,24 +154,24 @@ namespace wavex::protos::http {
             return true;
         }
 
-        /// Override send to immediately write serialized HTTP response to the socket if bound
-        Response &send(const std::string_view body) override {
+        /// CRTP implementation: immediately write serialized HTTP response to the socket if bound
+        HttpResponse &send_impl(const std::string_view body) {
             if (is_sent_) return *this;
             body_ = std::string(body);
             body_view_ = body_;
             is_sent_ = true;
             if (socket_) {
-                std::string serialized = serialize();
+                std::string serialized = serialize_impl();
                 asio::write(*socket_, asio::buffer(serialized));
             }
             return *this;
         }
 
         /**
-         * @brief Serialize the HTTP response into wire format (status line + headers + body).
+         * @brief CRTP implementation: serialize the HTTP response into wire format (status line + headers + body).
          * @return Serialized HTTP response string ready to be transmitted over the socket.
          */
-        [[nodiscard]] std::string serialize() const override {
+        [[nodiscard]] std::string serialize_impl() const {
             http::response res;
             res.status_code = status_code_;
             res.status_text = status_text_;

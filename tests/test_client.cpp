@@ -283,12 +283,12 @@ void test_http_client_integration() {
 
     auto &router = wavex::engine::HttpRouter::instance();
 
-    router.get("/api/client_test", [](wavex::base::Request &, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/client_test", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({{"client", "connected"}, {"framework", "WaveX"}});
         co_return;
     });
 
-    router.post("/api/client_echo", [](const wavex::base::Request &req, wavex::base::Response &res) -> asio::awaitable<void> {
+    router.post("/api/client_echo", [](const wavex::protos::http::HttpRequest &req, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send(std::string("Echo: ") + std::string(req.body()));
         co_return;
     });

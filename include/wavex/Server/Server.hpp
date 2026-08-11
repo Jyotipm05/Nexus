@@ -142,12 +142,13 @@ namespace wavex::server {
             co_return;
         }
 
-        /// Linear middleware chain runner helper
+        /// Generic middleware chain runner helper for arbitrary CRTP Request/Response types
+        template <typename ReqT, typename ResT, typename MwVec, typename H>
         static asio::awaitable<void> run_chain(
-            wavex::base::Request &req,
-            wavex::base::Response &res,
-            const std::vector<wavex::base::MiddlewareFn> &mws,
-            const wavex::engine::Handler &handler) {
+            ReqT &req,
+            ResT &res,
+            const MwVec &mws,
+            const H &handler) {
             std::size_t idx = 0;
             while (idx < mws.size() && !res.is_sent()) {
                 bool next_called = false;
