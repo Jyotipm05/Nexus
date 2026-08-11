@@ -16,7 +16,8 @@ export import :server_pool;
 
 export namespace wavex::server {
     using wavex::server::Task;
-    using wavex::server::WorkStealingQueue;
+    using wavex::server::LocalQueue;
+    using wavex::server::InjectorQueue;
     using wavex::server::ThreadPoolConfig;
     using wavex::server::WorkerNode;
     using wavex::server::ThreadPool;

@@ -14,8 +14,5 @@ module;
 export module wavex:router;
 
 export namespace wavex::engine {
-    using wavex::engine::Handler;
-    using wavex::engine::RouteMatch;
-    using wavex::engine::ScopedMiddleware;
     using wavex::engine::Router;
 }

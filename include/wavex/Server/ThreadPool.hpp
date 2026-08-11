@@ -1,6 +1,21 @@
 /**
  * @file ThreadPool.hpp
- * @brief Tokio-like adaptive work-stealing thread pool with hysteresis scaling and task redistribution.
+ * @brief Tokio-like adaptive work-stealing thread pool.
+ *
+ * Each worker owns a bounded, lock-free LocalQueue (256-slot ring buffer).
+ * A shared InjectorQueue (unbounded, lock-based) acts as the global overflow
+ * and external submission point.
+ *
+ * Task dispatch priority per worker (highest → lowest):
+ *   1. Pop from own LocalQueue  (lock-free, LIFO, cache-local)
+ *   2. Steal from a random peer LocalQueue  (lock-free, FIFO)
+ *   3. Pop from the shared InjectorQueue  (lock-based, FIFO)
+ *   4. Poll the worker's asio::io_context for coroutine continuations
+ *   5. Yield (1 ms sleep) to avoid tight CPU spin
+ *
+ * Task submission priority (ThreadPool::dispatch):
+ *   1. Try to push into the next round-robin worker's LocalQueue
+ *   2. If the LocalQueue is full (≥255 tasks), spill to InjectorQueue
  */
 
 #pragma once
@@ -9,24 +24,31 @@
 #define ASIO_HAS_CO_AWAIT 1
 #endif
 
-#include <vector>
-#include <thread>
-#include <memory>
+
 #include <atomic>
 #include <chrono>
 #include <iostream>
-#include <random>
+#include <memory>
 #include <mutex>
-#include <asio/io_context.hpp>
+#include <random>
+#include <thread>
+#include <vector>
+
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/io_context.hpp>
 
 #include <wavex/Server/WorkStealingQueue.hpp>
 
 namespace wavex::server {
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ThreadPoolConfig
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * @struct ThreadPoolConfig
-     * @brief Singleton configuration structure for thread pool limits and scaling thresholds.
+     * @class ThreadPoolConfig
+     * @brief Singleton configuration for thread pool limits and scaling thresholds.
      */
     class ThreadPoolConfig {
     public:
@@ -38,10 +60,10 @@ namespace wavex::server {
         std::size_t min_workers = 1;
         std::size_t max_workers = 5;
 
-        /// Upper load thresholds to trigger scale-up when running at N threads (index N-1)
+        /// Upper load thresholds to trigger scale-up at N threads (index N-1)
         std::vector<std::size_t> upper_thresholds = {10, 25, 50, 100};
 
-        /// Lower load thresholds to trigger scale-down when running at N threads (index N-2)
+        /// Lower load thresholds to trigger scale-down at N threads (index N-2)
         std::vector<std::size_t> lower_thresholds = {5, 15, 30, 60};
 
         /// Interval between hysteresis scaling evaluations
@@ -50,38 +72,47 @@ namespace wavex::server {
         void set_limits(std::size_t min_w, std::size_t max_w) {
             min_workers = min_w;
             max_workers = max_w;
-            if (upper_thresholds.size() < max_workers - 1) {
+            if (upper_thresholds.size() < max_workers - 1)
                 upper_thresholds.resize(max_workers - 1, 50);
-            }
-            if (lower_thresholds.size() < max_workers - 1) {
+            if (lower_thresholds.size() < max_workers - 1)
                 lower_thresholds.resize(max_workers - 1, 10);
-            }
         }
     };
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // WorkerNode
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
      * @struct WorkerNode
-     * @brief Context and state for a single slave/worker thread in the pool.
+     * @brief State for a single worker thread: its local ring queue, io_context,
+     *        and lifecycle flags.
      */
     struct WorkerNode {
         std::size_t id = 0;
         std::shared_ptr<asio::io_context> io_ctx;
-        std::unique_ptr<WorkStealingQueue> queue;
+        std::unique_ptr<LocalQueue> queue;   ///< Bounded 256-slot lock-free ring buffer
         std::atomic<bool> is_retiring{false};
         std::atomic<bool> is_busy{false};
         std::atomic<bool> stop_requested{false};
         std::thread thread;
 
-        WorkerNode(std::size_t worker_id)
+        explicit WorkerNode(const std::size_t worker_id)
             : id(worker_id),
               io_ctx(std::make_shared<asio::io_context>()),
-              queue(std::make_unique<WorkStealingQueue>()) {
-        }
+              queue(std::make_unique<LocalQueue>()) {}
     };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ThreadPool
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * @class ThreadPool
-     * @brief Adaptive Tokio-like work-stealing thread pool with threshold-based scaling.
+     * @brief Adaptive Tokio-style work-stealing thread pool.
+     *
+     * Maintains a vector of WorkerNodes (each with a LocalQueue) and a single
+     * shared InjectorQueue for overflow and external task submission.
      */
     class ThreadPool {
     public:
@@ -95,84 +126,106 @@ namespace wavex::server {
         }
 
         ThreadPool(const ThreadPool &) = delete;
-
         ThreadPool &operator=(const ThreadPool &) = delete;
 
-        /// Dispatch a generic task to the worker pool
+        /**
+         * @brief Submit a generic task to the pool.
+         *
+         * Tries to push into the next round-robin worker's LocalQueue first.
+         * Falls back to the InjectorQueue if the local ring is full.
+         */
         void dispatch(Task task) {
             std::lock_guard<std::mutex> lock(workers_mutex_);
-            if (workers_.empty()) return;
-            // Balance insertion across workers
-            std::size_t idx = next_worker_idx_++ % workers_.size();
-            workers_[idx]->queue->push(std::move(task));
-            workers_[idx]->io_ctx->post([w = workers_[idx].get()] {
-                w->queue->pop();
-            });
+            if (workers_.empty()) {
+                // No workers yet — queue directly into injector
+                injector_.push(std::move(task));
+                return;
+            }
+            const std::size_t idx = next_worker_idx_++ % workers_.size();
+            if (!workers_[idx]->queue->push(task)) {
+                // LocalQueue full → spill to global injector
+                injector_.push(std::move(task));
+            }
         }
 
-        /// Spawn an Asio coroutine onto one of the worker io_contexts
-        template<typename Coro>
+        /**
+         * @brief Spawn an Asio coroutine onto one of the worker io_contexts.
+         */
+        template <typename Coro>
         void spawn_coroutine(Coro coro) {
             std::lock_guard<std::mutex> lock(workers_mutex_);
             if (workers_.empty()) return;
-            std::size_t idx = next_worker_idx_++ % workers_.size();
+            const std::size_t idx = next_worker_idx_++ % workers_.size();
             asio::co_spawn(*workers_[idx]->io_ctx, std::move(coro), asio::detached);
         }
 
-        /// Get current active worker thread count
+        /// Get current active worker count.
         [[nodiscard]] std::size_t worker_count() const {
             std::lock_guard<std::mutex> lock(workers_mutex_);
             return workers_.size();
         }
 
-        /// Force an immediate scaling evaluation check
+        /// Force an immediate scaling evaluation.
         void evaluate_scaling() {
-            std::lock_guard<std::mutex> lock(workers_mutex_);
             check_and_scale();
         }
 
     private:
         ThreadPoolConfig &config_;
         mutable std::mutex workers_mutex_;
-        std::vector<std::shared_ptr<WorkerNode> > workers_;
+        std::vector<std::shared_ptr<WorkerNode>> workers_;
+        InjectorQueue injector_;          ///< Global overflow & external submission queue
         std::atomic<bool> pool_stopping_{false};
         std::thread monitor_thread_;
         std::atomic<std::size_t> next_worker_idx_{0};
 
+        // ── Lifecycle ──────────────────────────────────────────────────────
+
         void start_pool() {
             std::lock_guard<std::mutex> lock(workers_mutex_);
-            for (std::size_t i = 0; i < config_.min_workers; ++i) {
+            for (std::size_t i = 0; i < config_.min_workers; ++i)
                 add_worker_unlocked();
-            }
             pool_stopping_ = false;
             monitor_thread_ = std::thread([this] { monitor_loop(); });
         }
 
         void stop_pool() {
             pool_stopping_ = true;
-            if (monitor_thread_.joinable()) {
+            if (monitor_thread_.joinable())
                 monitor_thread_.join();
+
+            std::vector<std::shared_ptr<WorkerNode>> to_join;
+            {
+                std::lock_guard<std::mutex> lock(workers_mutex_);
+                for (const auto &w : workers_) {
+                    w->stop_requested = true;
+                    if (w->io_ctx) w->io_ctx->stop();
+                }
+                to_join = std::move(workers_);
             }
 
-            std::lock_guard<std::mutex> lock(workers_mutex_);
-            for (auto &w: workers_) {
-                w->stop_requested = true;
-                if (w->io_ctx) w->io_ctx->stop();
-                if (w->thread.joinable()) w->thread.join();
+            for (auto &w : to_join) {
+                if (w->thread.joinable())
+                    w->thread.join();
             }
-            workers_.clear();
         }
 
         void add_worker_unlocked() {
-            std::size_t new_id = workers_.size() + 1;
+            const std::size_t new_id = workers_.size() + 1;
             auto worker = std::make_shared<WorkerNode>(new_id);
             worker->thread = std::thread([this, w = worker] { worker_loop(w); });
-            workers_.push_back(worker);
+            workers_.emplace_back(std::move(worker));
         }
 
+        // ── Worker loop ────────────────────────────────────────────────────
+
         void worker_loop(const std::shared_ptr<WorkerNode> &w) {
+            // Seed per-thread RNG for randomised steal target selection.
+            std::mt19937 rng{std::random_device{}()};
+
             while (!w->stop_requested && !w->is_retiring) {
-                // 1. Process local task queue
+
+                // ── 1. Pop from own LocalQueue (LIFO, cache-local) ──────────
                 if (auto task = w->queue->pop()) {
                     w->is_busy = true;
                     (*task)();
@@ -180,110 +233,114 @@ namespace wavex::server {
                     continue;
                 }
 
-                // 2. Work stealing from neighboring workers if local queue is empty
-                bool stole_work = false; {
+                // ── 2. Steal from a random peer's LocalQueue (FIFO) ─────────
+                {
                     std::lock_guard<std::mutex> lock(workers_mutex_);
-                    for (const auto &other: workers_) {
-                        if (other->id != w->id && !other->queue->empty()) {
-                            if (auto stolen = other->queue->steal()) {
-                                w->is_busy = true;
-                                (*stolen)();
-                                w->is_busy = false;
-                                stole_work = true;
-                                break;
+                    const std::size_t n = workers_.size();
+                    if (n > 1) {
+                        // Pick a random start to avoid thundering-herd on worker 0.
+                        const std::size_t start = rng() % n;
+                        for (std::size_t i = 0; i < n; ++i) {
+                            auto &other = workers_[(start + i) % n];
+                            if (other->id != w->id) {
+                                if (auto stolen = other->queue->steal_half(*w->queue)) {
+                                    w->is_busy = true;
+                                    (*stolen)();
+                                    w->is_busy = false;
+                                    goto next_iteration; // restart priority chain
+                                }
                             }
                         }
                     }
                 }
 
-                if (stole_work) continue;
+                // ── 3. Drain one task from the global InjectorQueue ──────────
+                if (auto task = injector_.pop()) {
+                    w->is_busy = true;
+                    (*task)();
+                    w->is_busy = false;
+                    continue;
+                }
 
-                // 3. Poll io_context for event handlers / coroutines
+                // ── 4. Poll asio::io_context for coroutine continuations ─────
                 w->io_ctx->poll();
 
-                // Short sleep if idle to prevent tight CPU spin
+                // ── 5. Yield — prevent tight CPU spin when fully idle ────────
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+                next_iteration:;
+            }
+
+            // On thread exit (retire or stop), owner thread drains its local ring into global InjectorQueue
+            auto remaining = w->queue->drain_all();
+            for (auto &task : remaining) {
+                injector_.push(std::move(task));
             }
         }
+
+        // ── Monitor & scaling ──────────────────────────────────────────────
 
         void monitor_loop() {
             while (!pool_stopping_) {
                 std::this_thread::sleep_for(config_.check_interval);
                 if (pool_stopping_) break;
-
-                std::lock_guard<std::mutex> lock(workers_mutex_);
                 check_and_scale();
             }
         }
 
         void check_and_scale() {
-            if (workers_.empty()) return;
+            std::shared_ptr<WorkerNode> retiring_worker = nullptr;
 
-            std::size_t total_queue_depth = 0;
-            std::size_t active_busy = 0;
+            {
+                std::lock_guard<std::mutex> lock(workers_mutex_);
+                if (workers_.empty()) return;
 
-            for (const auto &w: workers_) {
-                total_queue_depth += w->queue->size();
-                if (w->is_busy) ++active_busy;
-            }
+                std::size_t total_queue_depth = injector_.size();
+                std::size_t active_busy = 0;
 
-            std::size_t aggregate_load = total_queue_depth + active_busy;
-            std::size_t current_count = workers_.size();
+                for (const auto &w : workers_) {
+                    total_queue_depth += w->queue->size();
+                    if (w->is_busy) ++active_busy;
+                }
 
-            // 1. Scale UP check
-            if (current_count < config_.max_workers) {
-                std::size_t thresh_idx = current_count - 1;
-                std::size_t high_thresh = (thresh_idx < config_.upper_thresholds.size())
-                                              ? config_.upper_thresholds[thresh_idx]
-                                              : 50;
-                if (aggregate_load > high_thresh) {
-                    add_worker_unlocked();
-                    return;
+                const std::size_t aggregate_load = total_queue_depth + active_busy;
+                const std::size_t current_count  = workers_.size();
+
+                // Scale UP
+                if (current_count < config_.max_workers) {
+                    const std::size_t tidx = current_count - 1;
+                    const std::size_t high_thresh = (tidx < config_.upper_thresholds.size())
+                        ? config_.upper_thresholds[tidx] : 50;
+                    if (aggregate_load > high_thresh) {
+                        add_worker_unlocked();
+                        return;
+                    }
+                }
+
+                // Scale DOWN
+                if (current_count > config_.min_workers) {
+                    const std::size_t tidx = current_count - 2;
+                    const std::size_t low_thresh = (tidx < config_.lower_thresholds.size())
+                        ? config_.lower_thresholds[tidx] : 5;
+                    if (aggregate_load < low_thresh) {
+                        retiring_worker = workers_.back();
+                        workers_.pop_back();
+                    }
                 }
             }
 
-            // 2. Scale DOWN check (with graceful decommissioning & task redistribution)
-            if (current_count > config_.min_workers) {
-                std::size_t thresh_idx = current_count - 2;
-                std::size_t low_thresh = (thresh_idx < config_.lower_thresholds.size())
-                                             ? config_.lower_thresholds[thresh_idx]
-                                             : 5;
-                if (aggregate_load < low_thresh) {
-                    decommission_worker_unlocked();
-                }
+            if (retiring_worker) {
+                decommission_worker(retiring_worker);
             }
         }
 
-        void decommission_worker_unlocked() {
-            if (workers_.size() <= config_.min_workers) return;
+        static void decommission_worker(const std::shared_ptr<WorkerNode> &retiring) {
+            retiring->is_retiring = true;
+            retiring->stop_requested = true;
 
-            auto retiring_worker = workers_.back();
-            workers_.pop_back();
-
-            retiring_worker->is_retiring = true;
-
-            // Wait for current active task coroutine to finish
-            while (retiring_worker->is_busy) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            }
-
-            // Drain remaining queued tasks from retiring worker
-            auto remaining_tasks = retiring_worker->queue->drain_all();
-
-            // Redistribute drained tasks across surviving active workers
-            if (!remaining_tasks.empty() && !workers_.empty()) {
-                std::size_t idx = 0;
-                for (auto &task: remaining_tasks) {
-                    workers_[idx % workers_.size()]->queue->push(std::move(task));
-                    ++idx;
-                }
-            }
-
-            retiring_worker->stop_requested = true;
-            if (retiring_worker->io_ctx) retiring_worker->io_ctx->stop();
-            if (retiring_worker->thread.joinable()) {
-                retiring_worker->thread.join();
-            }
+            if (retiring->thread.joinable())
+                retiring->thread.join();
         }
     };
+
 } // namespace wavex::server

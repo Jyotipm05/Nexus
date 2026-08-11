@@ -4,7 +4,7 @@
  *
  * Tests covered:
  *  1. Type aliases exist and are default-constructible (empty std::function)
- *  2. A middleware that calls next() — chain executes in onion order
+ *  2. A middleware that calls next() — chain executes in linear order
  *  3. A middleware that does NOT call next() — short-circuits the pipeline
  *  4. Middleware can post-process the Response after next() returns
  */
@@ -32,27 +32,29 @@
 
 // ─── Minimal concrete stubs ───────────────────────────────────────────────────
 
-struct StubRequest final : wavex::base::Request {
+// ─── Minimal concrete stubs ───────────────────────────────────────────────────
+
+struct StubRequest final : wavex::base::Request<StubRequest> {
     std::string path_val;
-    [[nodiscard]] std::string_view path() const override { return path_val; }
-    [[nodiscard]] std::optional<std::string_view> header(std::string_view) const override { return std::nullopt; }
-    [[nodiscard]] std::string_view body() const override { return {}; }
+    [[nodiscard]] std::string_view path_impl() const { return path_val; }
+    [[nodiscard]] std::optional<std::string_view> header_impl(std::string_view) const { return std::nullopt; }
+    [[nodiscard]] std::string_view body_impl() const { return {}; }
 };
 
-struct StubResponse final : wavex::base::Response {
+struct StubResponse final : wavex::base::Response<StubResponse> {
     std::vector<std::string> *sent_log = nullptr;
 
-    wavex::base::Response &send(const std::string_view body) override {
+    StubResponse &send_impl(const std::string_view body) {
         if (is_sent_) return *this;
         body_ = std::string(body);
         is_sent_ = true;
         if (sent_log) {
-            sent_log->push_back(serialize());
+            sent_log->push_back(serialize_impl());
         }
         return *this;
     }
 
-    [[nodiscard]] std::string serialize() const override {
+    [[nodiscard]] std::string serialize_impl() const {
         return "HTTP/1.1 " + std::to_string(status_code_) + "\r\n\r\n" + body_;
     }
 };
@@ -82,10 +84,11 @@ void run_sync(Coro coro) {
 // ─── Middleware pipeline runner ───────────────────────────────────────────────
 
 /// Linear coroutine runner that iterates over MiddlewareFn vector.
+template <typename ReqT, typename ResT>
 asio::awaitable<void> run_chain(
-    wavex::base::Request &req,
-    wavex::base::Response &res,
-    std::vector<wavex::base::MiddlewareFn> mws) {
+    ReqT &req,
+    ResT &res,
+    std::vector<wavex::base::GenericMiddlewareFn<ReqT, ResT>> mws) {
     std::size_t idx = 0;
     while (idx < mws.size() && !res.is_sent()) {
         bool next_called = false;
@@ -110,7 +113,7 @@ void test_type_aliases_exist() {
     std::cout << "\n[Test 1] Type aliases are constructible\n";
 
     wavex::base::Next next; // default-constructs to empty callable
-    wavex::base::MiddlewareFn mw;
+    wavex::base::GenericMiddlewareFn<StubRequest, StubResponse> mw;
 
     check(!next, "Next default-constructs as empty");
     check(!mw, "MiddlewareFn default-constructs as empty");
@@ -119,20 +122,20 @@ void test_type_aliases_exist() {
 // ─── Test 2 ───────────────────────────────────────────────────────────────────
 
 void test_chain_executes_in_order() {
-    std::cout << "\n[Test 2] Chain executes in onion order\n";
+    std::cout << "\n[Test 2] Chain executes in linear order\n";
 
     StubRequest req;
     StubResponse res;
     std::vector<std::string> log;
 
-    std::vector<wavex::base::MiddlewareFn> mws = {
-        [&log](wavex::base::Request &, wavex::base::Response &, wavex::base::Next next)
+    std::vector<wavex::base::GenericMiddlewareFn<StubRequest, StubResponse>> mws = {
+        [&log](StubRequest &, StubResponse &, wavex::base::Next next)
     -> asio::awaitable<void> {
             log.emplace_back("A:before");
             co_await next();
             log.emplace_back("A:after");
         },
-        [&log](wavex::base::Request &, wavex::base::Response &, wavex::base::Next next)
+        [&log](StubRequest &, StubResponse &, wavex::base::Next next)
     -> asio::awaitable<void> {
             log.emplace_back("B:before");
             co_await next();
@@ -144,9 +147,9 @@ void test_chain_executes_in_order() {
 
     check(log.size() == 4, "4 log entries recorded");
     check(log[0] == "A:before", "A executes first (before)");
-    check(log[1] == "B:before", "B executes second (before)");
-    check(log[2] == "B:after", "B executes third (after)");
-    check(log[3] == "A:after", "A executes last (after)");
+    check(log[1] == "A:after", "A executes second (after)");
+    check(log[2] == "B:before", "B executes third (before)");
+    check(log[3] == "B:after", "B executes last (after)");
 }
 
 // ─── Test 3 ───────────────────────────────────────────────────────────────────
@@ -158,15 +161,15 @@ void test_short_circuit() {
     StubResponse res;
     bool reached_second = false;
 
-    std::vector<wavex::base::MiddlewareFn> mws = {
+    std::vector<wavex::base::GenericMiddlewareFn<StubRequest, StubResponse>> mws = {
         // Auth guard — rejects without forwarding
-        [](wavex::base::Request &, wavex::base::Response &r, wavex::base::Next)
+        [](StubRequest &, StubResponse &r, wavex::base::Next)
     -> asio::awaitable<void> {
             r.status(401).send("Unauthorized");
             co_return;
         },
         // Must never run
-        [&reached_second](wavex::base::Request &, wavex::base::Response &, wavex::base::Next next)
+        [&reached_second](StubRequest &, StubResponse &, wavex::base::Next next)
     -> asio::awaitable<void> {
             reached_second = true;
             co_await next();
@@ -188,15 +191,15 @@ void test_middleware_post_processes_response() {
     StubRequest req;
     StubResponse res;
 
-    std::vector<wavex::base::MiddlewareFn> mws = {
+    std::vector<wavex::base::GenericMiddlewareFn<StubRequest, StubResponse>> mws = {
         // Outer: adds a header AFTER the inner middleware sets the body
-        [](wavex::base::Request &, wavex::base::Response &r, wavex::base::Next next)
+        [](StubRequest &, StubResponse &r, wavex::base::Next next)
     -> asio::awaitable<void> {
             co_await next();
             r.set("X-Powered-By", "WaveX");
         },
         // Inner: sets status + body
-        [](wavex::base::Request &, wavex::base::Response &r, wavex::base::Next)
+        [](StubRequest &, StubResponse &r, wavex::base::Next)
     -> asio::awaitable<void> {
             r.status(200).send("Hello");
             co_return;
@@ -223,15 +226,15 @@ void test_express_style_send_and_linear_chain() {
     bool post_send_executed = false;
     bool second_mw_executed = false;
 
-    std::vector<wavex::base::MiddlewareFn> mws = {
-        [&post_send_executed](wavex::base::Request &, wavex::base::Response &r, wavex::base::Next)
+    std::vector<wavex::base::GenericMiddlewareFn<StubRequest, StubResponse>> mws = {
+        [&post_send_executed](StubRequest &, StubResponse &r, wavex::base::Next)
         -> asio::awaitable<void> {
             r.status(200).json({{"message", "immediate"}});
             // Code after send() inside current lambda executes normally
             post_send_executed = true;
             co_return;
         },
-        [&second_mw_executed](wavex::base::Request &, wavex::base::Response &, wavex::base::Next next)
+        [&second_mw_executed](StubRequest &, StubResponse &, wavex::base::Next next)
         -> asio::awaitable<void> {
             second_mw_executed = true;
             co_await next();

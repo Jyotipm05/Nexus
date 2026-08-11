@@ -31,12 +31,51 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "WAVEX_TEST": "ON"
       }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Tests — Thread Sanitizer",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "WAVEX_TEST_TSAN": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Tests — Address + UB + Leak Sanitizers",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "WAVEX_TEST_ASAN": "ON"
+      }
     }
   ],
   "testPresets": [
     {
       "name": "run-tests",
       "configurePreset": "test-profile"
+    },
+    {
+      "name": "tsan",
+      "displayName": "Run Thread Sanitizer tests",
+      "configurePreset": "tsan",
+      "filter": {
+        "include": {
+          "label": "tsan"
+        }
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Run Address + UB + Leak Sanitizer tests",
+      "configurePreset": "asan",
+      "filter": {
+        "include": {
+          "label": "asan"
+        }
+      }
     }
   ]
 }
+

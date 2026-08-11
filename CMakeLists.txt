@@ -17,7 +17,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #    set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-I ")
 #endif ()
 
-option(WAVEX_TEST "Build tests for the wavex library" OFF)
+option(WAVEX_TEST      "Build tests for the wavex library"                           OFF)
+option(WAVEX_TEST_TSAN "Build tests with Thread Sanitizer (TSan) only"              OFF)
+option(WAVEX_TEST_ASAN "Build tests with Address + UB + Leak Sanitizers (ASan+UBSan+LSan)" OFF)
+
+# TSan and ASan/UBSan are mutually exclusive — the runtimes conflict.
+if (WAVEX_TEST_TSAN AND WAVEX_TEST_ASAN)
+    message(FATAL_ERROR
+        "WAVEX_TEST_TSAN and WAVEX_TEST_ASAN cannot both be ON. "
+        "Thread Sanitizer and Address Sanitizer runtimes are mutually exclusive."
+    )
+endif ()
+
+# Enabling either sanitizer build implicitly enables the base test build.
+if (WAVEX_TEST_TSAN OR WAVEX_TEST_ASAN)
+    set(WAVEX_TEST ON)
+endif ()
 
 include(FetchContent)
 
@@ -129,6 +144,7 @@ add_library(wavex
         src/Base/Uri.cpp
         src/Base/Url.cpp
         src/Engine/Router.cpp
+        src/Client/HttpClient.cpp
 )
 
 target_include_directories(wavex PUBLIC
@@ -165,6 +181,7 @@ target_sources(wavex
         BASE_DIRS include
         FILES
         include/wavex/Base/MiddleWare.hpp
+        include/wavex/Base/MimeTypes.hpp
         include/wavex/Engine/Router.hpp
         include/wavex/Engine/HttpRouter.hpp
         include/wavex/protos/http/Methods.hpp
@@ -174,6 +191,7 @@ target_sources(wavex
         include/wavex/Server/WorkStealingQueue.hpp
         include/wavex/Server/ThreadPool.hpp
         include/wavex/Server/Server.hpp
+        include/wavex/Client/HttpClient.hpp
 )
 
 # C++ Modules
@@ -194,6 +212,7 @@ target_sources(wavex
         src/Server/WorkStealingQueue.ixx
         src/Server/ThreadPool.ixx
         src/Base/MiddleWare.ixx
+        src/Client/HttpClient.ixx
 )
 
 # ===========================================================================
@@ -228,23 +247,88 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/WaveXConfig.cmake" DESTINATION "${CMA
 if (WAVEX_TEST)
     enable_testing()
 
-    add_executable(wavex_tests tests/test1.cpp)
-    target_link_libraries(wavex_tests PRIVATE wavex)
-    add_test(NAME CoreLibraryTests COMMAND wavex_tests)
+    # -----------------------------------------------------------------------
+    # Sanitizer flags — compiler-sensitive.
+    # MSVC:       supports ASan only (/fsanitize=address). TSan is unavailable.
+    # GCC/Clang:  full -fsanitize=thread | address,undefined,leak support.
+    # Each sanitizer variant is a separate cmake configure (separate build dir)
+    # so there is no need for duplicate library targets.
+    # -----------------------------------------------------------------------
+    if (WAVEX_TEST_TSAN)
+        if (MSVC)
+            message(FATAL_ERROR
+                "[WaveX] WAVEX_TEST_TSAN is not supported with MSVC. "
+                "Thread Sanitizer is only available with GCC or Clang."
+            )
+        endif ()
+        message(STATUS "[WaveX] TSan build enabled (GCC/Clang)")
+        set(WAVEX_SAN_COMPILE_FLAGS -fsanitize=thread -fno-omit-frame-pointer -g)
+        set(WAVEX_SAN_LINK_FLAGS    -fsanitize=thread)
+        set(WAVEX_SAN_ENV           "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1")
+        set(WAVEX_SAN_LABEL         tsan)
 
-    add_executable(wavex_mw_tests tests/test_MW.cpp)
-    target_link_libraries(wavex_mw_tests PRIVATE wavex)
-    add_test(NAME MiddlewareTests COMMAND wavex_mw_tests)
+    elseif (WAVEX_TEST_ASAN)
+        if (MSVC)
+            # MSVC ASan: no UBSan or LSan — address sanitizer only.
+            # The runtime is linked automatically; no linker flag needed.
+            message(STATUS "[WaveX] ASan build enabled (MSVC — address sanitizer only)")
+            set(WAVEX_SAN_COMPILE_FLAGS /fsanitize=address /Zi)
+            set(WAVEX_SAN_LINK_FLAGS    "")  # MSVC injects the ASan runtime automatically
+        else ()
+            message(STATUS "[WaveX] ASan+UBSan+LSan build enabled (GCC/Clang)")
+            set(WAVEX_SAN_COMPILE_FLAGS -fsanitize=address,undefined,leak -fno-omit-frame-pointer -g)
+            set(WAVEX_SAN_LINK_FLAGS    -fsanitize=address,undefined,leak)
+        endif ()
+        if (MSVC)
+            # MSVC ASan does not support leak detection (detect_leaks=1) or detect_stack_use_after_return=1.
+            set(WAVEX_SAN_ENV   "ASAN_OPTIONS=halt_on_error=1")
+        else ()
+            set(WAVEX_SAN_ENV   "ASAN_OPTIONS=halt_on_error=1:detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1")
+        endif ()
+        set(WAVEX_SAN_LABEL asan)
+    endif ()
 
-    add_executable(wavex_method_template_tests tests/test_method_template.cpp)
-    target_link_libraries(wavex_method_template_tests PRIVATE wavex)
-    add_test(NAME MethodTemplateTests COMMAND wavex_method_template_tests)
+    if (WAVEX_SAN_COMPILE_FLAGS)
+        # Apply to the library so instrumented code paths are covered too.
+        target_compile_options(wavex PUBLIC ${WAVEX_SAN_COMPILE_FLAGS})
+        if (WAVEX_SAN_LINK_FLAGS)
+            target_link_options(wavex PUBLIC ${WAVEX_SAN_LINK_FLAGS})
+        endif ()
+    endif ()
 
-    add_executable(wavex_server_tests tests/test_server.cpp)
-    target_link_libraries(wavex_server_tests PRIVATE wavex)
-    add_test(NAME ServerTests COMMAND wavex_server_tests)
+    # -----------------------------------------------------------------------
+    # Helper: register a test executable, linking against wavex.
+    # Sanitizer flags are inherited transitively via PUBLIC on wavex above.
+    # -----------------------------------------------------------------------
+    function(wavex_add_test test_name source)
+        cmake_parse_arguments(ARG "" "" "DEFINES" ${ARGN})
+        add_executable(${test_name} ${source})
+        target_link_libraries(${test_name} PRIVATE wavex)
+        if (ARG_DEFINES)
+            target_compile_definitions(${test_name} PRIVATE ${ARG_DEFINES})
+        endif ()
+        add_test(NAME ${test_name} COMMAND ${test_name})
+        if (WAVEX_SAN_COMPILE_FLAGS)
+            set_tests_properties(${test_name} PROPERTIES
+                LABELS       "${WAVEX_SAN_LABEL}"
+                ENVIRONMENT  "${WAVEX_SAN_ENV}"
+            )
+        endif ()
+    endfunction()
 
-    # Interactive dev/Postman manual testing server
+    # -----------------------------------------------------------------------
+    # Test registrations
+    # -----------------------------------------------------------------------
+    wavex_add_test(wavex_tests                 tests/test1.cpp)
+    wavex_add_test(wavex_mw_tests              tests/test_MW.cpp)
+    wavex_add_test(wavex_method_template_tests tests/test_method_template.cpp)
+    wavex_add_test(wavex_server_tests          tests/test_server.cpp)
+    wavex_add_test(wavex_client_tests          tests/test_client.cpp
+        DEFINES PROJECT_DIR="${CMAKE_SOURCE_DIR}"
+    )
+    wavex_add_test(wavex_server_chunked_tests  tests/test_server_chunked.cpp)
+
+    # Interactive dev/Postman manual testing server (not a CTest target)
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)
     target_link_libraries(wavex_postman_server PRIVATE wavex)
 endif ()
