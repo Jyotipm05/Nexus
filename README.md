@@ -4,16 +4,17 @@ A modern, high-performance C++23 backend framework built for coroutine-native HT
 
 WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), **Tokio** (lock-free dual-queue runtime with hysteresis-based thread scaling), and **Express.js** (linear middleware chain with immediate response dispatching).
 
-[![Version: v0.1.0-alpha](https://img.shields.io/badge/Version-v0.1.0--alpha-orange.svg)](RELEASE_NOTES.md)
+[![Version: v0.1.0-alpha](https://img.shields.io/badge/Version-v0.2.0--alpha-orange.svg)](RELEASE_NOTES.md)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
-[![CMake](https://img.shields.io/badge/CMake-3.20+-064F8C.svg)](https://cmake.org)
+[![CMake](https://img.shields.io/badge/CMake-4.0+-064F8C.svg)](https://cmake.org)
 
 ---
 
 ## Features
 
 - **⚡ Coroutine-Native Engine** — Async handlers written with Asio C++23 coroutines (`co_await`, `asio::awaitable<void>`), zero callback boilerplate.
+- **⚡ CRTP Zero-VTable Architecture** — Static compile-time polymorphism (`Request<Derived>`, `Response<Derived>`) eliminating virtual function pointers (`vptr`), saving memory and enabling zero-overhead direct dispatch.
 - **🚀 Express.js-Style Linear Pipeline** — Iterative, non-recursive `run_chain()` middleware runner with immediate response dispatch (`res.send()` / `res.json()`) and zero-allocation socket pointer dispatch (`HttpResponse res(&socket)`).
 - **🌳 Hybrid Radix-Tree Router** — High-performance radix-tree supporting static segments, dynamic parameters (`:id`), `{id:[0-9]+}` RE2 regex constraints, and catch-all wildcards (`*filepath`).
 - **🧵 Tokio-Style Lock-Free Dual-Queue Runtime** —
@@ -35,8 +36,9 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 using namespace wavex;
 
 // Auth Guard Middleware
-asio::awaitable<void> auth_guard(base::Request &req, base::Response &res, base::Next next) {
-    if (req.header("Authorization") != "Bearer secret123") {
+asio::awaitable<void> auth_guard(protos::http::HttpRequest &req, protos::http::HttpResponse &res, base::Next next) {
+    auto auth_header = req.header("Authorization");
+    if (!auth_header || *auth_header != "Bearer secret123") {
         res.status(401).json({{"error", "Unauthorized"}});
         co_return; // Immediate response sent, short-circuits pipeline!
     }
@@ -47,25 +49,25 @@ int main() {
     auto &router = engine::HttpRouter::instance();
 
     // 1. Plain text endpoint
-    router.get("/", [](base::Request &, base::Response &res) -> asio::awaitable<void> {
+    router.get("/", [](protos::http::HttpRequest &, protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("Welcome to WaveX!");
         co_return;
     });
 
     // 2. JSON endpoint
-    router.get("/api/json", [](base::Request &, base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/json", [](protos::http::HttpRequest &, protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({{"status", "success"}, {"framework", "WaveX"}, {"version", wx_version}});
         co_return;
     });
 
     // 3. Protected endpoint with middleware
-    router.get("/api/protected", {auth_guard}, [](base::Request &, base::Response &res) -> asio::awaitable<void> {
+    router.get("/api/protected", {auth_guard}, [](protos::http::HttpRequest &, protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({{"secret", "Access Granted"}});
         co_return;
     });
 
     // 4. Wildcard catch-all endpoint
-    router.get("/files/*filepath", [](base::Request &req, base::Response &res) -> asio::awaitable<void> {
+    router.get("/files/*filepath", [](protos::http::HttpRequest &req, protos::http::HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({{"file", std::string(req.path())}});
         co_return;
     });
@@ -146,9 +148,9 @@ graph LR
 | :--- | :--- | :--- |
 | `Base/Logger` | ✅ Complete | Levelled logger (TRACE, DEBUG, INFO, WARN, ERROR, FATAL) |
 | `Base/Uri` / `Base/Url` | ✅ Complete | RFC 3986 URI encode/decode & URL query string parser |
-| `Base/Request` | ✅ Complete | Protocol-agnostic request abstraction |
-| `Base/Response` | ✅ Complete | Protocol-agnostic fluent response builder (`send()`, `json()`, `status()`) |
-| `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware type & linear iterative execution |
+| `Base/Request` | ✅ Complete | Protocol-agnostic CRTP request base (`Request<Derived>`, zero-vtable) |
+| `Base/Response` | ✅ Complete | Protocol-agnostic CRTP response builder (`Response<Derived>`, zero-vtable, fluent API) |
+| `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`) & linear pipeline |
 | `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex & wildcard (`*filepath`) matching |
 | `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, etc.) |
 | `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot lock-free bounded ring buffer |
