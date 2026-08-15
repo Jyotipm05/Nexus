@@ -240,6 +240,12 @@ tests/                       ← Automated tests & postman_demo_server.cpp
 cmake/                       ← CMake installation config
 ```
 
+## Roadmap & Optional Future Features
+
+- 🛡 **DDoS Protection & OOM Backpressure Safeguard** — Optional network-level queue capacity watermarks (`max_injector_capacity`) that reject overload traffic with immediate HTTP `503 Service Unavailable` responses (`Retry-After: 5`) before allocation.
+- 🗜 **Zlib File Compression** — Optional Gzip / Brotli response compression choices in `send_file()`.
+- 🌐 **Compile-Time File Routing** — Build-time CMake directory scanner generating static route headers for static files (`StaticMount`) and C++ handler modules (`FolderMode`).
+
 ---
 
 ## License & Release

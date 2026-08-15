@@ -11,4 +11,6 @@ export module wavex:protos_http_response;
 
 export namespace wavex::protos::http {
     using wavex::protos::http::HttpResponse;
+    using wavex::protos::http::Http1Response;
+    using wavex::protos::http::http1response;
 }

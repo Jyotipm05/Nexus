@@ -9,8 +9,8 @@
 
 namespace wavex::client {
 
-    asio::awaitable<HttpResponse> HttpClient::send(HttpRequest req) {
-        HttpResponse res;
+    asio::awaitable<Http1Response> HttpClient::send(Http1Request req) {
+        Http1Response res;
 
         std::string raw_target(req.target());
         url::Url parsed_url = url::Url::parse(raw_target);
@@ -90,21 +90,21 @@ namespace wavex::client {
         co_return std::move(res);
     }
 
-    asio::awaitable<HttpResponse> HttpClient::get(const std::string_view url) {
+    asio::awaitable<Http1Response> HttpClient::get(const std::string_view url) {
         return request(method::GET, url);
     }
 
-    asio::awaitable<HttpResponse> HttpClient::post(const std::string_view url, const nlohmann::json &json_body) {
+    asio::awaitable<Http1Response> HttpClient::post(const std::string_view url, const nlohmann::json &json_body) {
         return request(method::POST, url, json_body.dump(), {{"Content-Type", "application/json"}});
     }
 
-    asio::awaitable<HttpResponse> HttpClient::request(
+    asio::awaitable<Http1Response> HttpClient::request(
         const method m,
         const std::string_view url,
         const std::string_view body,
         const std::vector<std::pair<std::string, std::string>> &headers) {
 
-        HttpRequest req(m, url);
+        Http1Request req(m, url);
         for (const auto &[k, v]: headers) {
             req.set_header(k, v);
         }

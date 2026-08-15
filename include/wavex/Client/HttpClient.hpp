@@ -30,8 +30,8 @@
 
 namespace wavex::client {
     using wavex::protos::http::method;
-    using wavex::protos::http::HttpRequest;
-    using wavex::protos::http::HttpResponse;
+    using wavex::protos::http::Http1Request;
+    using wavex::protos::http::Http1Response;
 
     /**
      * @class HttpClient
@@ -42,26 +42,26 @@ namespace wavex::client {
         HttpClient() = default;
 
         /**
-         * @brief Send an HttpRequest and await the HttpResponse asynchronously.
+         * @brief Send an Http1Request and await the Http1Response asynchronously.
          * @param req The HTTP request object. Target URL can be full URL ("http://api.site.com/v1/data").
-         * @return Coroutine awaitable producing the populated HttpResponse.
+         * @return Coroutine awaitable producing the populated Http1Response.
          */
-        static asio::awaitable<HttpResponse> send(HttpRequest req);
+        static asio::awaitable<Http1Response> send(Http1Request req);
 
         /**
          * @brief Convenience GET request to a 3rd party URL.
          * @param url Full target URL, e.g. "http://127.0.0.1:8080/api/json"
-         * @return Coroutine awaitable producing HttpResponse.
+         * @return Coroutine awaitable producing Http1Response.
          */
-        static asio::awaitable<HttpResponse> get(std::string_view url);
+        static asio::awaitable<Http1Response> get(std::string_view url);
 
         /**
          * @brief Convenience POST JSON request to a 3rd party URL.
          * @param url Full target URL
          * @param json_body JSON payload
-         * @return Coroutine awaitable producing HttpResponse.
+         * @return Coroutine awaitable producing Http1Response.
          */
-        static asio::awaitable<HttpResponse> post(std::string_view url, const nlohmann::json &json_body);
+        static asio::awaitable<Http1Response> post(std::string_view url, const nlohmann::json &json_body);
 
         /**
          * @brief Send a generic HTTP request by method and URL.
@@ -69,9 +69,9 @@ namespace wavex::client {
          * @param url Full target URL
          * @param body Request body
          * @param headers Extra request headers as key-value pairs
-         * @return Coroutine awaitable producing HttpResponse.
+         * @return Coroutine awaitable producing Http1Response.
          */
-        static asio::awaitable<HttpResponse> request(
+        static asio::awaitable<Http1Response> request(
             method m,
             std::string_view url,
             std::string_view body = "",

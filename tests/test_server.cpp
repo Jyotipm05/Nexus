@@ -7,7 +7,6 @@
 #include <wavex/Server/WorkStealingQueue.hpp>
 #include <wavex/Server/ThreadPool.hpp>
 
-#include <cassert>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -34,7 +33,7 @@ namespace {
 void test_http_response_serialization() {
     std::cout << "\n[Test 1] HttpResponse serialization & fluent API\n";
 
-    wavex::protos::http::HttpResponse res;
+    wavex::protos::http::Http1Response res;
     res.status(200).set("X-Custom-Header", "WaveXValue").send("Hello Server");
 
     check(res.status_code() == 200, "Status code is 200");
@@ -47,7 +46,7 @@ void test_http_response_serialization() {
     check(wire.find("Content-Length: 12\r\n") != std::string::npos, "Serialized output contains Content-Length: 12");
     check(wire.ends_with("Hello Server"), "Serialized wire ends with body 'Hello Server'");
 
-    wavex::protos::http::HttpResponse json_res;
+    wavex::protos::http::Http1Response json_res;
     nlohmann::json j = {{"status", "ok"}, {"count", 42}};
     json_res.status(201).json(j);
 
@@ -175,7 +174,7 @@ void test_thread_pool_execution_and_scaling() {
     check(pool.worker_count() >= 2, "Initial worker count is at least min_workers (2)");
 
     std::atomic<int> executed_count{0};
-    const int total_tasks = 20;
+    constexpr int total_tasks = 20;
 
     for (int i = 0; i < total_tasks; ++i) {
         pool.dispatch([&executed_count] {
@@ -185,15 +184,82 @@ void test_thread_pool_execution_and_scaling() {
     }
 
     // Give pool time to execute tasks and run scaling evaluation
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
     check(executed_count.load() == total_tasks, "All 20 dispatched tasks executed cleanly");
 
     // Force scale evaluation after workload drops
     pool.evaluate_scaling();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     check(pool.worker_count() <= 4, "Worker count is bounded within max_workers limit (<= 4)");
+}
+
+// ─── Test 5: Cache Line Alignment Verification ────────────────────────────────
+
+void test_cache_line_alignment() {
+    std::cout << "\n[Test 5] LocalQueue & InjectorQueue cache-line (64-byte) alignment verification\n";
+
+    check(alignof(wavex::server::LocalQueue) >= 64, "LocalQueue alignment is at least 64 bytes");
+    check(alignof(wavex::server::InjectorQueue) >= 64, "InjectorQueue alignment is at least 64 bytes");
+}
+
+// ─── Test 6: Proportional Hysteresis Scaling ─────────────────────────────────
+
+void test_proportional_hysteresis_scaling() {
+    std::cout << "\n[Test 6] Proportional Hysteresis Step Scaling & Cooldown Buffer\n";
+
+    auto &config = wavex::server::ThreadPoolConfig::instance();
+    config.set_limits(1, 16);
+    config.scale_up_divider = 2;
+    config.scale_down_cooldown_cycles = 3;
+    config.check_interval = std::chrono::seconds(10); // Pause background monitor auto-ticks during manual testing
+    config.upper_thresholds = {5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140};
+    config.lower_thresholds = {2, 4, 8, 15, 25, 35, 45, 55, 65, 75, 85, 95, 105, 115, 125};
+
+    wavex::server::ThreadPool pool(config);
+    check(pool.worker_count() == 1, "Initial worker count is 1 (min_workers)");
+
+    // Dispatch tasks to create load and trigger proportional scale-up
+    std::atomic<int> completed{0};
+    for (int i = 0; i < 25; ++i) {
+        pool.dispatch([&completed] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            completed.fetch_add(1);
+        });
+    }
+
+    // Force scale evaluation while load is active
+    pool.evaluate_scaling();
+    check(pool.worker_count() > 1, "Proportional scale-up increased worker count above min_workers");
+
+    const std::size_t scaled_workers = pool.worker_count();
+
+    // Wait for all tasks to complete
+    while (completed.load() < 25) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    // Test Scale-Down Cooldown Hysteresis
+    check(pool.cooldown_counter() == 0, "Cooldown counter starts at 0 before low-load evaluation");
+
+    // Evaluation 1 under zero load: counter increments to 1, worker count unchanged
+    pool.evaluate_scaling();
+    check(pool.cooldown_counter() == 1, "Cooldown counter incremented to 1 on low load check");
+    check(pool.worker_count() == scaled_workers, "Worker count retained during cooldown cycle 1");
+
+    // Evaluation 2 under zero load: counter increments to 2, worker count unchanged
+    pool.evaluate_scaling();
+    check(pool.cooldown_counter() == 2, "Cooldown counter incremented to 2 on second low load check");
+    check(pool.worker_count() == scaled_workers, "Worker count retained during cooldown cycle 2");
+
+    // Evaluation 3 under zero load: cooldown reached (3/3), resets counter & decommissions 1 worker
+    pool.evaluate_scaling();
+    check(pool.cooldown_counter() == 0, "Cooldown counter reset to 0 after triggering scale-down");
+    check(pool.worker_count() == scaled_workers - 1, "Worker count reduced by 1 after 3 consecutive low load checks");
+
+    // Reset check_interval for subsequent tests
+    config.check_interval = std::chrono::milliseconds(100);
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -205,6 +271,8 @@ int main() {
     test_work_stealing_queue();
     test_thread_pool_config_singleton();
     test_thread_pool_execution_and_scaling();
+    test_cache_line_alignment();
+    test_proportional_hysteresis_scaling();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " tests passed.\n";
     return tests_passed == tests_run ? 0 : 1;

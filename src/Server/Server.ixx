@@ -22,4 +22,6 @@ export namespace wavex::server {
     using wavex::server::WorkerNode;
     using wavex::server::ThreadPool;
     using wavex::server::Server;
+    using wavex::server::Http1Server;
+    using wavex::server::http1server;
 }

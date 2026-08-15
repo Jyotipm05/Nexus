@@ -187,11 +187,11 @@ namespace wavex::server {
         static constexpr std::size_t MASK = CAPACITY - 1;
         static_assert((CAPACITY & MASK) == 0, "CAPACITY must be a power of 2");
 
-        std::atomic<std::size_t> top_;
-        // Padding to prevent false-sharing between top_ (thieves) and bottom_ (owner).
-        char pad_[64 - sizeof(std::atomic<std::size_t>)]{};
-        std::atomic<std::size_t> bottom_;
-        std::array<Task, CAPACITY> slots_;
+        static constexpr std::size_t WAVEX_CACHE_LINE_SIZE = 64;
+
+        alignas(WAVEX_CACHE_LINE_SIZE) std::atomic<std::size_t> top_{0};
+        alignas(WAVEX_CACHE_LINE_SIZE) std::atomic<std::size_t> bottom_{0};
+        alignas(WAVEX_CACHE_LINE_SIZE) std::array<Task, CAPACITY> slots_;
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -257,9 +257,11 @@ namespace wavex::server {
         }
 
     private:
-        mutable std::mutex mutex_;
-        std::vector<Task> queue_;
-        std::size_t head_ = 0;
-        std::atomic<std::size_t> size_{0};
+        static constexpr std::size_t WAVEX_CACHE_LINE_SIZE = 64;
+
+        alignas(WAVEX_CACHE_LINE_SIZE) mutable std::mutex mutex_;
+        alignas(WAVEX_CACHE_LINE_SIZE) std::vector<Task> queue_;
+        alignas(WAVEX_CACHE_LINE_SIZE) std::size_t head_ = 0;
+        alignas(WAVEX_CACHE_LINE_SIZE) std::atomic<std::size_t> size_{0};
     };
 } // namespace wavex::server

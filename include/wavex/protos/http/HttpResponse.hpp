@@ -35,10 +35,27 @@ namespace wavex::protos::http {
     };
     /**
      * @class HttpResponse
-     * @brief HTTP implementation of base::Response with fluent API and zero-copy view storage.
+     * @brief HTTP response parameterized on Codec — supports both server-side creation & client parsing.
+     * @tparam Codec Protocol codec defining parser, encoder, decoder, request, and response types.
      */
-    class HttpResponse final : public base::Response<HttpResponse> {
+    template <typename Codec = wavex::protos::http::http1codec>
+    class HttpResponse final : public base::Response<HttpResponse<Codec>> {
     public:
+        using codec_type = Codec;
+        using parser_type = typename Codec::parser;
+        using encoder_type = typename Codec::encoder;
+        using decoder_type = typename Codec::decoder;
+        using response_type = typename Codec::response;
+
+        using base_type = base::Response<HttpResponse<Codec>>;
+        using base_type::status_code_;
+        using base_type::body_;
+        using base_type::headers_;
+        using base_type::is_sent_;
+        using base_type::set;
+        using base_type::status;
+        using base_type::send;
+
         HttpResponse() = default;
 
         explicit HttpResponse(asio::ip::tcp::socket *socket) : socket_(socket) {}
@@ -57,7 +74,7 @@ namespace wavex::protos::http {
          * copy the response through co_return.
          */
         HttpResponse(const HttpResponse &other)
-            : base::Response<HttpResponse>(other),
+            : base::Response<HttpResponse<Codec>>(other),
               socket_(other.socket_),
               buffer_owner_(other.buffer_owner_),
               dechunked_body_storage_(other.dechunked_body_storage_),
@@ -128,7 +145,7 @@ namespace wavex::protos::http {
             headers_views_.clear();
 
             std::size_t consumed = 0;
-            if (parser::parse_response(buffer_owner_, parsed_, consumed) != parser::result::success) {
+            if (parser_type::parse_response(buffer_owner_, parsed_, consumed) != parser_type::result::success) {
                 headers_views_.clear();
                 return false;
             }
@@ -139,7 +156,7 @@ namespace wavex::protos::http {
             // Handle chunked response un-chunking
             if (const auto te = parsed_.get_header("Transfer-Encoding");
                 te && te->find("chunked") != std::string_view::npos) {
-                dechunked_body_storage_ = decoder::dechunk(parsed_.body);
+                dechunked_body_storage_ = decoder_type::dechunk(parsed_.body);
                 body_view_ = dechunked_body_storage_;
             } else {
                 body_view_ = parsed_.body;
@@ -168,11 +185,11 @@ namespace wavex::protos::http {
         }
 
         /**
-         * @brief CRTP implementation: serialize the HTTP response into wire format (status line + headers + body).
+         * @brief CRTP implementation: serialize the HTTP response into wire format via Codec::encoder.
          * @return Serialized HTTP response string ready to be transmitted over the socket.
          */
         [[nodiscard]] std::string serialize_impl() const {
-            http::response res;
+            response_type res;
             res.status_code = status_code_;
             res.status_text = status_text_;
             res.body = body_view_.empty() ? std::string_view(body_) : body_view_;
@@ -189,7 +206,7 @@ namespace wavex::protos::http {
                 }
             }
 
-            return http::encoder::serialize(res);
+            return encoder_type::serialize(res);
         }
 
         /// Access status text as zero-copy std::string_view
@@ -248,7 +265,7 @@ namespace wavex::protos::http {
 
             if (data.empty()) co_return std::expected<void, std::error_code>{};
 
-            std::string chunk_bytes = http::encoder::format_chunk(data);
+            std::string chunk_bytes = encoder_type::format_chunk(data);
             co_return co_await async_write_with_timeout(chunk_bytes, timeout);
         }
 
@@ -265,7 +282,7 @@ namespace wavex::protos::http {
                 }
             }
 
-            std::string_view term = http::encoder::format_terminal_chunk();
+            std::string_view term = encoder_type::format_terminal_chunk();
             auto res = co_await async_write_with_timeout(term, timeout);
             is_sent_ = true;
             co_return res;
@@ -381,7 +398,7 @@ namespace wavex::protos::http {
         }
 
         [[nodiscard]] std::string serialize_headers_only() const {
-            http::response res;
+            response_type res;
             res.status_code = status_code_;
             res.status_text = status_text_;
             res.body = "";
@@ -398,7 +415,7 @@ namespace wavex::protos::http {
                 }
             }
 
-            return http::encoder::serialize(res);
+            return encoder_type::serialize(res);
         }
 
         asio::ip::tcp::socket *socket_ = nullptr;
@@ -406,8 +423,12 @@ namespace wavex::protos::http {
         std::string buffer_owner_;
         std::string dechunked_body_storage_;
         std::string_view body_view_;
-        http::response parsed_;
+        response_type parsed_;
         std::vector<std::pair<std::string_view, std::string_view>> headers_views_;
         bool is_headers_sent_ = false;
     };
+
+    /// Concrete default HTTP/1.x response type aliases
+    using Http1Response = HttpResponse<wavex::protos::http::http1codec>;
+    using http1response = Http1Response;
 } // namespace wavex::protos::http

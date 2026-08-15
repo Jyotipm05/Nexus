@@ -11,4 +11,6 @@ export module wavex:protos_http_request;
 
 export namespace wavex::protos::http {
     using wavex::protos::http::HttpRequest;
+    using wavex::protos::http::Http1Request;
+    using wavex::protos::http::http1request;
 }

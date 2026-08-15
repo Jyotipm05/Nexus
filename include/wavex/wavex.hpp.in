@@ -1,7 +1,7 @@
 /**
  * @file wavex.hpp
  * @brief Main entry header for the WaveX framework.
- * 
+ *
  * This file declares core utility functions and macros, such as version information,
  * and includes essential protocol, routing, and server definitions.
  */
@@ -32,3 +32,4 @@ namespace wavex {
      */
     void _version();
 }
+

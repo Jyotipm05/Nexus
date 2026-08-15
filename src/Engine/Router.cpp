@@ -9,6 +9,6 @@
 #include <wavex/Engine/HttpRouter.hpp>
 
 namespace wavex::engine {
-    // Explicit template instantiation for the HTTP specialisation
-    template class Router<HttpProto>;
+    // Explicit template instantiation for the default HTTP/1.x specialization
+    template class Router<Http1Proto>;
 }

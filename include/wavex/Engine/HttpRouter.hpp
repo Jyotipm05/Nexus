@@ -18,23 +18,32 @@
 namespace wavex::engine {
     /**
      * @struct HttpProto
-     * @brief Protocol adapter for HTTP — provides the method, request, and response types.
+     * @brief Protocol adapter for HTTP — provides the method, request, and response types for a specific Codec.
      */
+    template <typename Codec = protos::http::http1codec>
     struct HttpProto {
         using method = protos::http::method;
-        using request = protos::http::HttpRequest;
-        using response = protos::http::HttpResponse;
+        using request = protos::http::HttpRequest<Codec>;
+        using response = protos::http::HttpResponse<Codec>;
     };
+
+    /// Concrete default HTTP/1.x protocol adapter aliases
+    using Http1Proto = HttpProto<protos::http::http1codec>;
+    using http1proto = Http1Proto;
 
     /**
      * @class HttpRouter
-     * @brief HTTP-specific convenience wrapper around Router<HttpProto>.
+     * @brief HTTP-specific convenience wrapper around Router<HttpProto<Codec>>.
      */
-    class HttpRouter : public Router<HttpProto> {
+    template <typename Codec = protos::http::http1codec>
+    class HttpRouter : public Router<HttpProto<Codec>> {
     public:
-        using Router::route;
-        using Router::use;
-        using Router::resolve;
+        using Base = Router<HttpProto<Codec>>;
+        using typename Base::Handler;
+        using typename Base::MiddlewareFn;
+        using Base::route;
+        using Base::use;
+        using Base::resolve;
 
         /// Singleton instance getter for HttpRouter.
         static HttpRouter &instance() {
@@ -114,4 +123,8 @@ namespace wavex::engine {
             route(protos::http::method::QUERY, pattern, std::move(mws), std::move(h));
         }
     };
+
+    /// Concrete default HTTP/1.x router type aliases
+    using Http1Router = HttpRouter<protos::http::http1codec>;
+    using http1router = Http1Router;
 } // namespace wavex::engine
