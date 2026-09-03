@@ -119,6 +119,8 @@ namespace wavex::protos::http {
 
         [[nodiscard]] request_type &raw() { return parsed_; }
 
+        [[nodiscard]] http::request &raw() { return parsed_; }
+
     private:
         void extract_path_query(const std::string_view full_target) {
             std::string_view path_and_query = full_target;

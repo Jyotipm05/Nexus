@@ -202,6 +202,8 @@ namespace wavex::server {
 
         // ── Lifecycle ──────────────────────────────────────────────────────
 
+        // ── Lifecycle ──────────────────────────────────────────────────────
+
         void start_pool() {
             std::lock_guard<std::mutex> lock(workers_mutex_);
             for (std::size_t i = 0; i < config_.min_workers; ++i)

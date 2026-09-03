@@ -362,6 +362,154 @@ namespace wavex::protos::http {
             co_return co_await end_chunked(timeout);
         }
 
+        /// Access status text as zero-copy std::string_view
+        [[nodiscard]] std::string_view status_text() const { return status_text_; }
+
+        /// Retrieve a header value by name (zero-copy std::string_view)
+        [[nodiscard]] std::optional<std::string_view> header(const std::string_view name) const {
+            if (!headers_views_.empty()) {
+                for (const auto &[k, v]: headers_views_) {
+                    if (detail::is_equal(k, name)) return v;
+                }
+            } else {
+                for (const auto &[k, v]: headers_) {
+                    if (detail::is_equal(k, name)) return v;
+                }
+            }
+            return std::nullopt;
+        }
+
+        /// Access zero-copy headers views
+        [[nodiscard]] const std::vector<std::pair<std::string_view, std::string_view>> &header_views() const {
+            return headers_views_;
+        }
+
+        /// Access the raw unparsed HTTP response wire buffer
+        [[nodiscard]] std::string_view raw_response() const { return buffer_owner_; }
+
+        /**
+         * @brief Starts chunked response streaming over the bound socket.
+         * Transmits HTTP status line and Transfer-Encoding: chunked headers immediately.
+         */
+        asio::awaitable<std::expected<void, std::error_code>> start_chunked(
+            const std::chrono::milliseconds timeout = std::chrono::milliseconds(15000)) {
+            if (is_headers_sent_) co_return std::expected<void, std::error_code>{};
+
+            set("Transfer-Encoding", "chunked");
+            set("Connection", "keep-alive");
+
+            std::string head = serialize_headers_only();
+            is_headers_sent_ = true;
+
+            co_return co_await async_write_with_timeout(head, timeout);
+        }
+
+        /**
+         * @brief Writes a single chunk of data to the chunked HTTP stream.
+         */
+        asio::awaitable<std::expected<void, std::error_code>> write_chunk(
+            const std::string_view data,
+            const std::chrono::milliseconds timeout = std::chrono::milliseconds(15000)) {
+            if (!is_headers_sent_) {
+                if (auto res = co_await start_chunked(timeout); !res) {
+                    co_return res;
+                }
+            }
+
+            if (data.empty()) co_return std::expected<void, std::error_code>{};
+
+            std::string chunk_bytes = http::encoder::format_chunk(data);
+            co_return co_await async_write_with_timeout(chunk_bytes, timeout);
+        }
+
+        /**
+         * @brief Sends terminal chunk 0\r\n\r\n and finishes the chunked HTTP response.
+         */
+        asio::awaitable<std::expected<void, std::error_code>> end_chunked(
+            const std::chrono::milliseconds timeout = std::chrono::milliseconds(15000)) {
+            if (is_sent_) co_return std::expected<void, std::error_code>{};
+
+            if (!is_headers_sent_) {
+                if (auto res = co_await start_chunked(timeout); !res) {
+                    co_return res;
+                }
+            }
+
+            std::string_view term = http::encoder::format_terminal_chunk();
+            auto res = co_await async_write_with_timeout(term, timeout);
+            is_sent_ = true;
+            co_return res;
+        }
+
+        /**
+         * @brief Streams a file from disk with automatic MIME detection and default/custom timeouts.
+         */
+        asio::awaitable<std::expected<void, std::error_code>> send_file(
+            const std::string_view filepath,
+            const std::chrono::milliseconds timeout = std::chrono::milliseconds(30000),
+            const std::size_t buffer_size = 65536,
+            const CompressionMode compression = CompressionMode::None) {
+            const std::string_view mime = base::mime_type_from_path(filepath);
+            co_return co_await send_file(filepath, mime, timeout, buffer_size, compression);
+        }
+
+        /**
+         * @brief Streams a file from disk with custom MIME override and default/custom timeouts.
+         */
+        asio::awaitable<std::expected<void, std::error_code>> send_file(
+            const std::string_view filepath,
+            const std::string_view custom_mime,
+            const std::chrono::milliseconds timeout = std::chrono::milliseconds(30000),
+            const std::size_t buffer_size = 65536,
+            const CompressionMode compression = CompressionMode::None) {
+            (void)compression; // Reserved for future zlib update
+
+            std::filesystem::path path(filepath);
+            std::error_code ec;
+            const uintmax_t file_size = std::filesystem::file_size(path, ec);
+            if (ec) {
+                co_return std::unexpected(std::make_error_code(std::errc::no_such_file_or_directory));
+            }
+
+            std::ifstream file(path, std::ios::binary);
+            if (!file.is_open()) {
+                co_return std::unexpected(std::make_error_code(std::errc::no_such_file_or_directory));
+            }
+
+            set("Content-Type", custom_mime);
+
+            if (file_size < 100 * 1024 * 1024) { // < 100 MB: use Content-Length
+                set("Content-Length", std::to_string(file_size));
+                std::string headers = serialize_headers_only();
+                is_headers_sent_ = true;
+                if (auto res = co_await async_write_with_timeout(headers, timeout); !res) {
+                    co_return res;
+                }
+
+                std::vector<char> buf(buffer_size);
+                while (file.read(buf.data(), static_cast<std::streamsize>(buf.size())) || file.gcount() > 0) {
+                    const auto bytes_read = static_cast<std::size_t>(file.gcount());
+                    if (bytes_read == 0) break;
+                    if (auto res = co_await async_write_with_timeout(std::string_view(buf.data(), bytes_read), timeout); !res) {
+                        co_return res;
+                    }
+                }
+                is_sent_ = true;
+                co_return std::expected<void, std::error_code>{};
+            }
+
+            // Chunked streaming for large files
+            std::vector<char> buf(buffer_size);
+            while (file.read(buf.data(), static_cast<std::streamsize>(buf.size())) || file.gcount() > 0) {
+                const auto bytes_read = static_cast<std::size_t>(file.gcount());
+                if (bytes_read == 0) break;
+                if (auto res = co_await write_chunk(std::string_view(buf.data(), bytes_read), timeout); !res) {
+                    co_return res;
+                }
+            }
+            co_return co_await end_chunked(timeout);
+        }
+
     private:
         [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> async_write_with_timeout(
             const std::string_view data,
