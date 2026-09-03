@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file test_method_template.cpp
  * @brief Unit tests for the wavex::engine::Router and HttpRouter class template.
  *
@@ -144,7 +144,10 @@ void test_static_routes() {
         check(execute_handler(match_put->handler) == "PUT_RESOURCE_BODY", "PUT handler returns distinct body 'PUT_RESOURCE_BODY'");
     }
 
-    auto match_del = router.resolve(HTTP_Method::DELETE, "/api/v1/resource");
+#ifdef DELETE
+#undef DELETE
+#endif
+    auto match_del = router.resolve((HTTP_Method::DELETE), "/api/v1/resource");
     check(match_del.has_value(), "DELETE /api/v1/resource resolves successfully");
     if (match_del) {
         check(execute_handler(match_del->handler) == "DELETE_RESOURCE_BODY", "DELETE handler returns distinct body 'DELETE_RESOURCE_BODY'");

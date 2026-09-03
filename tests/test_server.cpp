@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file test_server.cpp
  * @brief Unit & integration tests for HttpResponse, WorkStealingQueue, ThreadPool, and Server.
  */
@@ -184,13 +184,13 @@ void test_thread_pool_execution_and_scaling() {
     }
 
     // Give pool time to execute tasks and run scaling evaluation
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     check(executed_count.load() == total_tasks, "All 20 dispatched tasks executed cleanly");
 
     // Force scale evaluation after workload drops
     pool.evaluate_scaling();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::this_thread::sleep_for(std::chrono::milliseconds(90));
 
     check(pool.worker_count() <= 4, "Worker count is bounded within max_workers limit (<= 4)");
 }

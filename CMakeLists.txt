@@ -204,6 +204,7 @@ target_sources(wavex
         include/wavex/Server/ThreadPool.hpp
         include/wavex/Server/Server.hpp
         include/wavex/Client/HttpClient.hpp
+        include/wavex/Cli/Cli.hpp
 )
 
 # C++ Modules
@@ -225,6 +226,7 @@ target_sources(wavex
         src/Server/ThreadPool.ixx
         src/Base/MiddleWare.ixx
         src/Client/HttpClient.ixx
+        src/CLI/CLI.ixx
 )
 
 # ===========================================================================
@@ -342,6 +344,7 @@ if (WAVEX_TEST)
         DEFINES PROJECT_DIR="${CMAKE_SOURCE_DIR}"
     )
     wavex_add_test(wavex_server_chunked_tests  tests/test_server_chunked.cpp)
+    wavex_add_test(wavex_cli_tests             tests/test_cli.cpp)
 
     # Interactive dev/Postman manual testing server (not a CTest target)
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)

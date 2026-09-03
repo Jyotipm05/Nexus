@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file test_client.cpp
  * @brief Unit & integration tests for HttpClient, HttpRequest (client), and HttpResponse (client).
  */

@@ -180,4 +180,4 @@ Test endpoints against `http://127.0.0.1:8080`.
 
 ## ⚖️ License
 
-By contributing to WaveX, you agree that your contributions will be licensed under the project's [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+By contributing to WaveX, you agree that your contributions will be licensed under the project's [Mozilla Public License Version 2.0 (MPL-2.0)](LICENSE).

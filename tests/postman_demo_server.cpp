@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file postman_demo_server.cpp
  * @brief Interactive WaveX HTTP Server for Postman & Manual Testing.
  *
@@ -15,7 +15,7 @@
  *  4. GET  | /api/protected             | None                                  | 401 Unauthorized (Pipeline short-circuit test)
  *  5. GET  | /api/protected             | Authorization: Bearer secret123       | 200 OK - Secret data (Access Granted)
  *  6. GET  | /users/:id                 | None                                  | 200 OK - Dynamic path parameter matching
- *  7. GET  | /files/*filepath           | None                                  | 200 OK - Wildcard catch-all match
+ *  7. GET  | /files/ *filepath          | None                                  | 200 OK - Wildcard catch-all match
  *          | (e.g. /files/docs/2026/r.pdf)|                                       |
  * ====================================================================================================
  */

@@ -1,8 +1,15 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file HttpClient.cpp
  * @brief Implementation of HttpClient methods for 3rd-party HTTP service calls.
  */
 
+#include <coroutine>
+#include <utility>
 #include <wavex/Client/HttpClient.hpp>
 #include <asio/write.hpp>
 #include <asio/connect.hpp>

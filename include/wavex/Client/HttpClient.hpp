@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file HttpClient.hpp
  * @brief Async coroutine-based HTTP/1.1 client for sending requests to 3rd-party services.
@@ -21,6 +26,8 @@
 #include <asio/co_spawn.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/use_awaitable.hpp>
+#include <cstddef>
+#include <cstdint>
 #include <asio/redirect_error.hpp>
 #include <nlohmann/json.hpp>
 

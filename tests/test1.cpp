@@ -1,4 +1,4 @@
-import wavex;
+﻿import wavex;
 #include <iostream>
 
 int main() {

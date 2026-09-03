@@ -1,11 +1,11 @@
 # WaveX
 
-A modern, high-performance C++23 backend framework built for coroutine-native HTTP servers, Express.js-style pipeline execution, and extensible protocol support.
+A modern, high-performance C++23 backend framework built for coroutine-native HTTP servers & clients, Express.js-style pipeline execution, extensible protocol support, and powerful CLI tooling.
 
 WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), **Tokio** (lock-free dual-queue runtime with hysteresis-based thread scaling), and **Express.js** (linear middleware chain with immediate response dispatching).
 
-[![Version: v0.1.0-alpha](https://img.shields.io/badge/Version-v0.2.0--alpha-orange.svg)](RELEASE_NOTES.md)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Version: v0.3.0](https://img.shields.io/badge/Version-v0.3.0-orange.svg)](RELEASE_NOTES.md)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![CMake](https://img.shields.io/badge/CMake-4.0+-064F8C.svg)](https://cmake.org)
 
@@ -13,21 +13,27 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 
 ## Features
 
-- **⚡ Coroutine-Native Engine** — Async handlers written with Asio C++23 coroutines (`co_await`, `asio::awaitable<void>`), zero callback boilerplate.
+- **⚡ Coroutine-Native Engine** — Async server handlers and client requests written with Asio C++23 coroutines (`co_await`, `asio::awaitable<void>`), zero callback boilerplate.
 - **⚡ CRTP Zero-VTable Architecture** — Static compile-time polymorphism (`Request<Derived>`, `Response<Derived>`) eliminating virtual function pointers (`vptr`), saving memory and enabling zero-overhead direct dispatch.
 - **🚀 Express.js-Style Linear Pipeline** — Iterative, non-recursive `run_chain()` middleware runner with immediate response dispatch (`res.send()` / `res.json()`) and zero-allocation socket pointer dispatch (`HttpResponse res(&socket)`).
 - **🌳 Hybrid Radix-Tree Router** — High-performance radix-tree supporting static segments, dynamic parameters (`:id`), `{id:[0-9]+}` RE2 regex constraints, and catch-all wildcards (`*filepath`).
+- **🌐 Async Coroutine HTTP Client** — Modern, coroutine-native HTTP/HTTPS client (`HttpClient`) for non-blocking outbound requests (`get`, `post`, `send`) with connection reuse and optional TLS 1.3 encryption.
+- **📦 Chunked Transfer-Encoding** — Full streaming support for HTTP/1.1 chunked request and response encoding & decoding.
+- **🗂 MIME Type Detection Engine** — Fast, built-in file extension to MIME content-type resolver (`MimeTypes.hpp`) supporting over 50+ common web media types.
+- **🛠 Modern CLI Framework** — Built-in declarative CLI command engine (`wavex::cli::App`) with nested subcommands, typed flag parsing, required argument validation, and automatic help generation.
 - **🧵 Tokio-Style Lock-Free Dual-Queue Runtime** —
   - **`LocalQueue`**: Bounded 256-slot lock-free ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
   - **`InjectorQueue`**: Unbounded global MPMC queue with lock-free atomic size tracking for external tasks and overflow.
   - **Zero Request Loss on Scale-Down**: Retiring workers safely drain their remaining local ring tasks back into `InjectorQueue` on thread exit.
 - **🛡 Pipeline Short-Circuiting** — Middleware rejection (e.g. `401 Unauthorized`) immediately sends the response while skipping downstream middlewares and route handlers.
-- **📦 C++20 Modules & Headers** — Dual distribution models: standard C++ header inclusions (`#include <wavex/wavex.hpp>`) and modern C++20 Module partitions (`import wavex;`).
+- **📦 C++20/C++23 Modules & Headers** — Dual distribution models: standard C++ header inclusions (`#include <wavex/wavex.hpp>`) and modern C++ module partitions (`import wavex;`).
 - **🧪 Interactive Postman Dev Server** — Pre-configured testing server ([tests/postman_demo_server.cpp](tests/postman_demo_server.cpp)) with ready-to-use Postman test endpoints.
 
 ---
 
 ## Quick Start
+
+### 1. HTTP Server & Middleware
 
 ```cpp
 #include <iostream>
@@ -80,6 +86,53 @@ int main() {
 }
 ```
 
+### 2. Async HTTP Client
+
+```cpp
+#include <iostream>
+#include <asio.hpp>
+#include <wavex/Client/HttpClient.hpp>
+
+using namespace wavex::client;
+
+asio::awaitable<void> fetch_data(asio::io_context &ioc) {
+    HttpClient client(ioc);
+    
+    // GET request
+    auto response = co_await client.get("http://httpbin.org/get");
+    std::cout << "Status: " << response.status_code() << "\n";
+    std::cout << "Body: " << response.body() << "\n";
+
+    // POST request with JSON
+    auto post_res = co_await client.post("http://httpbin.org/post", "{\"framework\":\"wavex\"}", "application/json");
+    std::cout << "POST Response: " << post_res.body() << "\n";
+}
+```
+
+### 3. Command-Line Interface (CLI) Engine
+
+```cpp
+#include <wavex/Cli/Cli.hpp>
+#include <iostream>
+
+int main(int argc, char* argv[]) {
+    wavex::cli::App app("wavex-tool", "WaveX CLI Utility", "1.0.0");
+
+    bool verbose = false;
+    std::string port = "8080";
+
+    app.add_flag("-v", "--verbose", "Enable verbose logging", verbose);
+    app.add_option("-p", "--port", "Server port", port);
+
+    auto* serve_cmd = app.add_subcommand("serve", "Start the HTTP server");
+    serve_cmd->callback([&]() {
+        std::cout << "Starting server on port " << port << " (verbose=" << verbose << ")\n";
+    });
+
+    return app.run(argc, argv);
+}
+```
+
 ---
 
 ## Architecture
@@ -89,6 +142,7 @@ graph LR
     subgraph "Base (protocol-agnostic)"
         Logger["Logger<br/><small>TRACE..FATAL</small>"]
         Uri["Uri / Url<br/><small>RFC 3986</small>"]
+        Mime["MimeTypes<br/><small>file ext -> Content-Type</small>"]
         Req["Request<br/><small>abstract</small>"]
         Res["Response<br/><small>fluent API</small>"]
         MW["Middleware<br/><small>linear chain + next()</small>"]
@@ -110,12 +164,17 @@ graph LR
         Pool --> Server
     end
 
-    subgraph "Protos — HTTP"
-        Codec["http1codec<br/><small>parser + encoder</small>"]
+    subgraph "Protos & Networking"
+        Codec["http1codec<br/><small>chunked + zero-copy</small>"]
         HReq["HttpRequest"]
         HRes["HttpResponse"]
+        Client["HttpClient<br/><small>async coroutine client</small>"]
         HReq --> Server
         HRes --> Server
+    end
+
+    subgraph "CLI"
+        CLIApp["Cli::App<br/><small>subcommands & flags</small>"]
     end
 
     Req --> HReq
@@ -123,9 +182,11 @@ graph LR
     HttpRouter --> Server
     MW --> Server
     Codec --> Server
+    Codec --> Client
 
     style Logger fill:#2d6a4f,color:#fff
     style Uri fill:#2d6a4f,color:#fff
+    style Mime fill:#2d6a4f,color:#fff
     style Req fill:#2d6a4f,color:#fff
     style Res fill:#2d6a4f,color:#fff
     style MW fill:#2d6a4f,color:#fff
@@ -134,6 +195,8 @@ graph LR
     style Codec fill:#40916c,color:#fff
     style HReq fill:#40916c,color:#fff
     style HRes fill:#40916c,color:#fff
+    style Client fill:#40916c,color:#fff
+    style CLIApp fill:#2d6a4f,color:#fff
     style Server fill:#52b788,color:#000
     style LocalQ fill:#1b4332,color:#fff
     style InjQ fill:#1b4332,color:#fff
@@ -148,6 +211,7 @@ graph LR
 | :--- | :--- | :--- |
 | `Base/Logger` | ✅ Complete | Levelled logger (TRACE, DEBUG, INFO, WARN, ERROR, FATAL) |
 | `Base/Uri` / `Base/Url` | ✅ Complete | RFC 3986 URI encode/decode & URL query string parser |
+| `Base/MimeTypes` | ✅ Complete | Fast file extension to MIME type mappings (`mime_type_from_ext`) |
 | `Base/Request` | ✅ Complete | Protocol-agnostic CRTP request base (`Request<Derived>`, zero-vtable) |
 | `Base/Response` | ✅ Complete | Protocol-agnostic CRTP response builder (`Response<Derived>`, zero-vtable, fluent API) |
 | `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`) & linear pipeline |
@@ -157,10 +221,11 @@ graph LR
 | `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with lock-free atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
 | `Server/Server` | ✅ Complete | Coroutine TCP server with master acceptor & slave worker pool |
-| `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder & response decoder |
+| `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder & Chunked Transfer-Encoding |
 | `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request for server parsing & client builder |
 | `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket writing & client parsing |
-| `Client/HttpClient` | ✅ Complete | Async coroutine HTTP client for calling 3rd-party services (`get`, `post`, `send`) |
+| `Client/HttpClient` | ✅ Complete | Async coroutine HTTP/HTTPS client for calling 3rd-party services (`get`, `post`, `send`) |
+| `Cli/Cli` | ✅ Complete | Type-safe CLI argument parser, flag validator, and subcommand engine |
 
 ---
 
@@ -219,6 +284,7 @@ include/wavex/
 │   ├── Request.hpp          ← Abstract request base
 │   ├── Response.hpp         ← Abstract response + fluent API
 │   ├── MiddleWare.hpp       ← Middleware definition
+│   ├── MimeTypes.hpp        ← File extension to MIME type resolver
 │   ├── Uri.hpp              ← RFC 3986 URI utilities
 │   └── Url.hpp              ← URL & query string parser
 ├── Engine/
@@ -228,10 +294,14 @@ include/wavex/
 │   ├── WorkStealingQueue.hpp← LocalQueue (lock-free ring) & InjectorQueue (global MPMC)
 │   ├── ThreadPool.hpp       ← Tokio-style adaptive worker pool
 │   └── Server.hpp           ← Coroutine TCP server
+├── Client/
+│   └── HttpClient.hpp       ← Async coroutine HTTP client
+├── Cli/
+│   └── Cli.hpp              ← Subcommand and CLI option parser
 └── protos/
     └── http/
         ├── Methods.hpp      ← HTTP method enum
-        ├── http1codec.hpp   ← Zero-copy HTTP/1.x parser + encoder
+        ├── http1codec.hpp   ← Zero-copy HTTP/1.x parser + chunked encoder/decoder
         ├── HttpRequest.hpp  ← Concrete HTTP request
         └── HttpResponse.hpp ← Concrete HTTP response
 
@@ -250,8 +320,8 @@ cmake/                       ← CMake installation config
 
 ## License & Release
 
-- **License**: WaveX is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+- **License**: WaveX is licensed under the [Mozilla Public License Version 2.0 (MPL-2.0)](LICENSE).
 - **Third-Party Notices**: See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency copyright statements.
-- **Release Notes**: See RELEASE_NOTES for version `v0.1.0-alpha` details.
+- **Release Notes**: See [RELEASE_NOTES.md](RELEASE_NOTES.md) for version changelog and release history.
 
 Copyright © 2026 Jyotipriya Mondal
