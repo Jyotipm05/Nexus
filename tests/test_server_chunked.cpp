@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file test_server_chunked.cpp
  * @brief Integration tests for server-side chunked response streaming and file transfers in WaveX.
  */
@@ -40,10 +40,10 @@ void test_mime_types() {
 // ─── Test 2: Chunk Encoder Formatting ───────────────────────────────────────
 void test_chunk_encoder() {
     std::cout << "\n[Test 2] http1codec encoder::format_chunk\n";
-    std::string formatted = wavex::protos::http::encoder::format_chunk("hello");
+    std::string formatted = wavex::protos::http::http1codec::encoder::format_chunk("hello");
     check(formatted == "5\r\nhello\r\n", R"(format_chunk("hello") == "5\r\nhello\r\n")");
 
-    std::string_view term = wavex::protos::http::encoder::format_terminal_chunk();
+    std::string_view term = wavex::protos::http::http1codec::encoder::format_terminal_chunk();
     check(term == "0\r\n\r\n", R"(format_terminal_chunk() == "0\r\n\r\n")");
 }
 
@@ -70,10 +70,10 @@ void test_server_streaming_and_files() {
         f << bin_content;
     }
 
-    wavex::engine::HttpRouter router;
+    wavex::engine::Http1Router router;
 
     // 1. Chunked Stream Route
-    router.get("/stream", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/stream", [](wavex::protos::http::Http1Request &, wavex::protos::http::Http1Response &res) -> asio::awaitable<void> {
         (void)co_await res.start_chunked();
         (void)co_await res.write_chunk("Part 1: Hello ");
         (void)co_await res.write_chunk("Part 2: WaveX!");
@@ -81,19 +81,19 @@ void test_server_streaming_and_files() {
     });
 
     // 2. Auto MIME File Route
-    router.get("/download_html", [html_file](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/download_html", [html_file](wavex::protos::http::Http1Request &, wavex::protos::http::Http1Response &res) -> asio::awaitable<void> {
         (void)co_await res.send_file(html_file.string());
     });
 
     // 3. Custom MIME File Route
-    router.get("/download_custom", [bin_file](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/download_custom", [bin_file](wavex::protos::http::Http1Request &, wavex::protos::http::Http1Response &res) -> asio::awaitable<void> {
         (void)co_await res.send_file(bin_file.string(), "application/x-wavex-custom");
     });
 
     asio::io_context io;
 
     // Launch server on port 8099
-    wavex::server::Server server(router, "127.0.0.1", 8099);
+    wavex::server::Http1Server server(router, "127.0.0.1", 8099);
 
     asio::co_spawn(io, [&]() -> asio::awaitable<void> {
         // A. Test /stream

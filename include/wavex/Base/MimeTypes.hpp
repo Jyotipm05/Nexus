@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file MimeTypes.hpp
  * @brief Dedicated MIME type resolution system for WaveX.
@@ -20,7 +25,7 @@ namespace wavex::base {
     };
 
     // Strictly sorted alphabetically by extension for std::lower_bound.
-    constexpr std::array<MimePair, 32> mime_map = {{
+    inline constexpr std::array<MimePair, 32> mime_map = {{
         {"avif",  "image/avif"},
         {"cs",    "text/plain; charset=utf-8"},
         {"css",   "text/css; charset=utf-8"},

@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file ThreadPool.hpp
  * @brief Tokio-like adaptive work-stealing thread pool.
@@ -59,6 +64,12 @@ namespace wavex::server {
 
         std::size_t min_workers = 1;
         std::size_t max_workers = 5;
+
+        /// Scale-up divider for proportional step calculation: step = max(1, (target - current) / scale_up_divider)
+        std::size_t scale_up_divider = 2;
+
+        /// Number of consecutive low-load evaluation cycles before decommissioning a worker thread
+        std::size_t scale_down_cooldown_cycles = 3;
 
         /// Upper load thresholds to trigger scale-up at N threads (index N-1)
         std::vector<std::size_t> upper_thresholds = {10, 25, 50, 100};
@@ -170,6 +181,12 @@ namespace wavex::server {
             check_and_scale();
         }
 
+        /// Get current scale-down cooldown counter (for diagnostics/testing).
+        [[nodiscard]] std::size_t cooldown_counter() const {
+            std::lock_guard<std::mutex> lock(workers_mutex_);
+            return scale_down_cooldown_counter_;
+        }
+
     private:
         ThreadPoolConfig &config_;
         mutable std::mutex workers_mutex_;
@@ -177,7 +194,13 @@ namespace wavex::server {
         InjectorQueue injector_;          ///< Global overflow & external submission queue
         std::atomic<bool> pool_stopping_{false};
         std::thread monitor_thread_;
+        std::condition_variable cv_monitor_;
+        mutable std::mutex monitor_mutex_;
+        bool monitor_signal_{false};
         std::atomic<std::size_t> next_worker_idx_{0};
+        std::size_t scale_down_cooldown_counter_{0};
+
+        // ── Lifecycle ──────────────────────────────────────────────────────
 
         // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -190,7 +213,11 @@ namespace wavex::server {
         }
 
         void stop_pool() {
-            pool_stopping_ = true;
+            {
+                std::lock_guard<std::mutex> lock(monitor_mutex_);
+                pool_stopping_ = true;
+            }
+            cv_monitor_.notify_all();
             if (monitor_thread_.joinable())
                 monitor_thread_.join();
 
@@ -208,6 +235,14 @@ namespace wavex::server {
                 if (w->thread.joinable())
                     w->thread.join();
             }
+        }
+
+        void notify_monitor() {
+            {
+                std::lock_guard<std::mutex> lock(monitor_mutex_);
+                monitor_signal_ = true;
+            }
+            cv_monitor_.notify_one();
         }
 
         void add_worker_unlocked() {
@@ -281,9 +316,15 @@ namespace wavex::server {
         // ── Monitor & scaling ──────────────────────────────────────────────
 
         void monitor_loop() {
-            while (!pool_stopping_) {
-                std::this_thread::sleep_for(config_.check_interval);
+            while (true) {
+                std::unique_lock<std::mutex> lock(monitor_mutex_);
+                cv_monitor_.wait_for(lock, config_.check_interval, [this] {
+                    return pool_stopping_ || monitor_signal_;
+                });
                 if (pool_stopping_) break;
+                monitor_signal_ = false;
+                lock.unlock();
+
                 check_and_scale();
             }
         }
@@ -306,26 +347,58 @@ namespace wavex::server {
                 const std::size_t aggregate_load = total_queue_depth + active_busy;
                 const std::size_t current_count  = workers_.size();
 
-                // Scale UP
+                // ── 1. Scale UP (Proportional Step Scaling) ──────────────────
                 if (current_count < config_.max_workers) {
                     const std::size_t tidx = current_count - 1;
                     const std::size_t high_thresh = (tidx < config_.upper_thresholds.size())
                         ? config_.upper_thresholds[tidx] : 50;
+
                     if (aggregate_load > high_thresh) {
-                        add_worker_unlocked();
+                        scale_down_cooldown_counter_ = 0;
+
+                        // Determine target worker count based on upper thresholds
+                        std::size_t target_workers = current_count + 1;
+                        for (std::size_t k = current_count + 1; k <= config_.max_workers; ++k) {
+                            const std::size_t k_idx = k - 1;
+                            const std::size_t k_thresh = (k_idx < config_.upper_thresholds.size())
+                                ? config_.upper_thresholds[k_idx] : (50 * k_idx);
+                            if (aggregate_load > k_thresh) {
+                                target_workers = k;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        const std::size_t needed = (target_workers > current_count) ? (target_workers - current_count) : 1;
+                        const std::size_t divider = (config_.scale_up_divider > 0) ? config_.scale_up_divider : 1;
+                        const std::size_t step = std::max<std::size_t>(1, needed / divider);
+                        const std::size_t to_add = std::min(step, config_.max_workers - current_count);
+
+                        for (std::size_t i = 0; i < to_add; ++i) {
+                            add_worker_unlocked();
+                        }
                         return;
                     }
                 }
 
-                // Scale DOWN
+                // ── 2. Scale DOWN (Hysteresis Cooldown Buffer) ───────────────
                 if (current_count > config_.min_workers) {
                     const std::size_t tidx = current_count - 2;
                     const std::size_t low_thresh = (tidx < config_.lower_thresholds.size())
                         ? config_.lower_thresholds[tidx] : 5;
+
                     if (aggregate_load < low_thresh) {
-                        retiring_worker = workers_.back();
-                        workers_.pop_back();
+                        ++scale_down_cooldown_counter_;
+                        if (scale_down_cooldown_counter_ >= config_.scale_down_cooldown_cycles) {
+                            scale_down_cooldown_counter_ = 0;
+                            retiring_worker = workers_.back();
+                            workers_.pop_back();
+                        }
+                    } else {
+                        scale_down_cooldown_counter_ = 0;
                     }
+                } else {
+                    scale_down_cooldown_counter_ = 0;
                 }
             }
 

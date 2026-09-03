@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file test_client.cpp
  * @brief Unit & integration tests for HttpClient, HttpRequest (client), and HttpResponse (client).
  */
@@ -8,14 +8,19 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <asio/io_context.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <nlohmann/json.hpp>
 
-#include "wavex/Base/Request.hpp"
-#include "wavex/Base/Response.hpp"
+#include <wavex/wavex.hpp>
 
 import wavex;
+
+using HttpRequest = wavex::protos::http::Http1Request;
+using HttpResponse = wavex::protos::http::Http1Response;
+using HttpRouter = wavex::engine::Http1Router;
+using Server = wavex::server::Http1Server;
 
 namespace {
     int tests_run = 0;
@@ -85,7 +90,7 @@ namespace {
      * @brief Write parsed response summary to a file.
      */
     void dump_parsed_to_file(const std::string &path,
-                             const wavex::protos::http::HttpResponse &res) {
+                             const HttpResponse &res) {
         std::ofstream ofs(path);
         if (!ofs) return;
         ofs << "Status: " << res.status_code() << " " << res.status_text() << "\n";
@@ -107,7 +112,7 @@ namespace {
 void test_http_request_client_serialization() {
     std::cout << "\n[Test 1] HttpRequest client builder & serialization\n";
 
-    wavex::protos::http::HttpRequest req(wavex::protos::http::method::GET, "http://api.example.com/v1/users?page=2");
+    HttpRequest req(wavex::protos::http::method::GET, "http://api.example.com/v1/users?page=2");
     req.set_header("Authorization", "Bearer token123");
 
     check(req.method_type() == wavex::protos::http::method::GET, "Method is GET");
@@ -133,7 +138,7 @@ void test_http_response_client_parsing() {
         "\r\n"
         "{\"status\":\"active\"}";
 
-    wavex::protos::http::HttpResponse res;
+    HttpResponse res;
     check(res.parse(raw_res), "HttpResponse parsed raw HTTP response");
     check(res.status_code() == 200, "Status code is 200");
     check(res.status_text() == "OK", "Status text is OK");
@@ -151,7 +156,7 @@ void test_http_response_client_parsing() {
         " Developer\r\n"
         "0\r\n\r\n";
 
-    wavex::protos::http::HttpResponse chunked_res;
+    HttpResponse chunked_res;
     check(chunked_res.parse(raw_chunked_res), "Chunked response parsed");
     check(chunked_res.get_body() == "Mozilla Developer", "Chunked body auto-dechunked to 'Mozilla Developer'");
 
@@ -198,7 +203,7 @@ void test_http_response_client_parsing() {
 
     constexpr std::size_t expected_header_count = 11;
 
-    wavex::protos::http::HttpResponse real_res;
+    HttpResponse real_res;
     check(real_res.parse(real_chunked_res), "Real-world chunked response (example.com) parsed");
 
     // Verify headers were parsed correctly (not body content leaking in)
@@ -247,7 +252,7 @@ void test_http_response_client_parsing() {
     // Previously (default copy ctor), copying an HttpResponse left all
     // string_view members pointing at the SOURCE's buffer — a use-after-free.
     {
-        wavex::protos::http::HttpResponse copy = real_res;   // copy ctor
+        HttpResponse copy = real_res;   // copy ctor
         check(copy.status_code() == 200,
               "Copied response status code is 200");
         check(copy.status_text() == "OK",
@@ -281,20 +286,20 @@ void test_http_response_client_parsing() {
 void test_http_client_integration() {
     std::cout << "\n[Test 3] HttpClient async GET and POST requests against local Server\n";
 
-    auto &router = wavex::engine::HttpRouter::instance();
+    auto &router = HttpRouter::instance();
 
-    router.get("/api/client_test", [](wavex::protos::http::HttpRequest &, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/api/client_test", [](HttpRequest &, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({{"client", "connected"}, {"framework", "WaveX"}});
         co_return;
     });
 
-    router.post("/api/client_echo", [](const wavex::protos::http::HttpRequest &req, wavex::protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.post("/api/client_echo", [](const HttpRequest &req, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send(std::string("Echo: ") + std::string(req.body()));
         co_return;
     });
 
     // Start local test server on port 8086
-    wavex::server::Server server(router, "127.0.0.1", 8086);
+    Server server(router, "127.0.0.1", 8086);
 
     // Run server on background thread
     std::thread server_thread([&server] {

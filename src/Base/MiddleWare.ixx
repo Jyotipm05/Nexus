@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file MiddleWare.ixx
  * @brief C++ module interface for the WaveX middleware pipeline types.
@@ -17,12 +22,18 @@ module;
 #define ASIO_HAS_CO_AWAIT 1
 #include <functional>
 #include <asio/awaitable.hpp>
+#include <wavex/Base/MimeTypes.hpp>
 #include <wavex/Base/Request.hpp>
 #include <wavex/Base/Response.hpp>
 
 export module wavex:middleware;
 
 export namespace wavex::base {
+    using wavex::base::Request;
+    using wavex::base::Response;
+    using wavex::base::mime_type_from_ext;
+    using wavex::base::mime_type_from_path;
+
     /// Callable that invokes the next middleware or the final handler.
     using Next = std::function<asio::awaitable<void>()>;
 

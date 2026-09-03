@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file http1codec.hpp
  * @brief HTTP/1.x Protocol Codec — Parser and Encoder Implementation
@@ -94,7 +99,7 @@ namespace wavex::protos::http {
      * optimisation levels.
      */
     inline constexpr std::string_view to_string(method m) noexcept {
-        static constexpr std::array<std::string_view, 10> names = {
+        constexpr std::array<std::string_view, 10> names = {
             "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT", "QUERY"
         };
         const auto idx = static_cast<std::size_t>(m);

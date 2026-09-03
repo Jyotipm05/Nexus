@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file Server.hpp
  * @brief Templated coroutine-based TCP Server with master acceptor and dynamic slave thread pool.
@@ -36,9 +41,13 @@ namespace wavex::server {
      * @tparam Codec Protocol codec (default `protos::http::http1codec`).
      * @tparam RouterType Router specialization (default `engine::HttpRouter`).
      */
-    template<typename Codec = wavex::protos::http::http1codec, typename RouterType = wavex::engine::HttpRouter>
+    template<typename Codec = wavex::protos::http::http1codec, typename RouterType = wavex::engine::HttpRouter<Codec>>
     class Server {
     public:
+        using codec_type = Codec;
+        using RequestType = wavex::protos::http::HttpRequest<Codec>;
+        using ResponseType = wavex::protos::http::HttpResponse<Codec>;
+
         Server(RouterType &router, std::string address, const unsigned short port)
             : router_(router),
               address_(std::move(address)),
@@ -105,9 +114,9 @@ namespace wavex::server {
                 std::size_t bytes_read = co_await socket.async_read_some(asio::buffer(buffer));
                 std::string raw_data(buffer, bytes_read);
 
-                wavex::protos::http::HttpRequest req(raw_data);
+                RequestType req(raw_data);
                 if (!req.parse()) {
-                    wavex::protos::http::HttpResponse err_res;
+                    ResponseType err_res;
                     err_res.status(400).send("Bad Request");
                     std::string out = err_res.serialize();
                     co_await asio::async_write(socket, asio::buffer(out));
@@ -116,14 +125,14 @@ namespace wavex::server {
 
                 auto match = router_.resolve(req.method_type(), req.path());
                 if (!match) {
-                    wavex::protos::http::HttpResponse not_found_res;
+                    ResponseType not_found_res;
                     not_found_res.status(404).send("Not Found"); // Not found Page to be added later.
                     std::string out = not_found_res.serialize();
                     co_await asio::async_write(socket, asio::buffer(out));
                     co_return;
                 }
 
-                wavex::protos::http::HttpResponse res(&socket);
+                ResponseType res(&socket);
 
                 // Execute per-route middleware chain and handler
                 if (match->middlewares.empty()) {
@@ -171,4 +180,8 @@ namespace wavex::server {
             co_return;
         }
     };
+
+    /// Concrete default HTTP/1.x server type aliases
+    using Http1Server = Server<wavex::protos::http::http1codec, wavex::engine::Http1Router>;
+    using http1server = Http1Server;
 } // namespace wavex::server

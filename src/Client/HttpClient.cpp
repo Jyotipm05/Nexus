@@ -1,16 +1,23 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file HttpClient.cpp
  * @brief Implementation of HttpClient methods for 3rd-party HTTP service calls.
  */
 
+#include <coroutine>
+#include <utility>
 #include <wavex/Client/HttpClient.hpp>
 #include <asio/write.hpp>
 #include <asio/connect.hpp>
 
 namespace wavex::client {
 
-    asio::awaitable<HttpResponse> HttpClient::send(HttpRequest req) {
-        HttpResponse res;
+    asio::awaitable<Http1Response> HttpClient::send(Http1Request req) {
+        Http1Response res;
 
         std::string raw_target(req.target());
         url::Url parsed_url = url::Url::parse(raw_target);
@@ -90,21 +97,21 @@ namespace wavex::client {
         co_return std::move(res);
     }
 
-    asio::awaitable<HttpResponse> HttpClient::get(const std::string_view url) {
+    asio::awaitable<Http1Response> HttpClient::get(const std::string_view url) {
         return request(method::GET, url);
     }
 
-    asio::awaitable<HttpResponse> HttpClient::post(const std::string_view url, const nlohmann::json &json_body) {
+    asio::awaitable<Http1Response> HttpClient::post(const std::string_view url, const nlohmann::json &json_body) {
         return request(method::POST, url, json_body.dump(), {{"Content-Type", "application/json"}});
     }
 
-    asio::awaitable<HttpResponse> HttpClient::request(
+    asio::awaitable<Http1Response> HttpClient::request(
         const method m,
         const std::string_view url,
         const std::string_view body,
         const std::vector<std::pair<std::string, std::string>> &headers) {
 
-        HttpRequest req(m, url);
+        Http1Request req(m, url);
         for (const auto &[k, v]: headers) {
             req.set_header(k, v);
         }

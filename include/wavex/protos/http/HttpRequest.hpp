@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file HttpRequest.hpp
  * @brief Concrete HTTP/1.x implementation of base::Request.
@@ -21,10 +26,20 @@
 namespace wavex::protos::http {
     /**
      * @class HttpRequest
-     * @brief HTTP/1.x request — supports both server-side parsing and client-side creation.
+     * @brief HTTP request parameterized on Codec — supports both server-side parsing and client-side creation.
+     * @tparam Codec Protocol codec defining parser, encoder, decoder, request, and response types.
      */
-    class HttpRequest final : public base::Request<HttpRequest> {
+    template <typename Codec = wavex::protos::http::http1codec>
+    class HttpRequest final : public base::Request<HttpRequest<Codec>> {
     public:
+        using codec_type = Codec;
+        using parser_type = typename Codec::parser;
+        using encoder_type = typename Codec::encoder;
+        using request_type = typename Codec::request;
+
+        using base_type = base::Request<HttpRequest<Codec>>;
+        using base_type::query;
+
         HttpRequest() = default;
 
         /// Construct from a raw buffer (server side).
@@ -42,8 +57,8 @@ namespace wavex::protos::http {
         /// Parse the owned buffer (server side). Returns true on success.
         bool parse() {
             size_t consumed = 0;
-            if (const auto result = parser::parse_request(buffer_, parsed_, consumed);
-                result != parser::result::success)
+            if (const auto result = parser_type::parse_request(buffer_, parsed_, consumed);
+                result != parser_type::result::success)
                 return false;
 
             extract_path_query(parsed_.target);
@@ -92,15 +107,17 @@ namespace wavex::protos::http {
         [[nodiscard]] std::string_view body_impl() const { return parsed_.body; }
 
         /**
-         * @brief Serialize this HTTP request into HTTP/1.1 wire format.
+         * @brief Serialize this HTTP request into wire format via Codec::encoder.
          * @return Serialized HTTP request string ready for network transmission.
          */
         [[nodiscard]] std::string serialize() const {
-            return encoder::serialize_request(parsed_);
+            return encoder_type::serialize_request(parsed_);
         }
 
         /// Access the raw parsed codec request
-        [[nodiscard]] const http::request &raw() const { return parsed_; }
+        [[nodiscard]] const request_type &raw() const { return parsed_; }
+
+        [[nodiscard]] request_type &raw() { return parsed_; }
 
         [[nodiscard]] http::request &raw() { return parsed_; }
 
@@ -141,11 +158,15 @@ namespace wavex::protos::http {
         }
 
         std::string buffer_;              ///< owned receive buffer (server)
-        http::request parsed_;           ///< zero-copy views
+        request_type parsed_;             ///< zero-copy views
         std::string path_;               ///< extracted path
         std::string raw_target_owned_;   ///< owned full target string (client)
         std::string path_target_owned_;  ///< owned path + query string (client)
         std::string body_owned_;         ///< owned body string (client)
         std::vector<std::pair<std::string, std::string>> headers_owned_; ///< owned headers (client)
     };
+
+    /// Concrete default HTTP/1.x request type aliases
+    using Http1Request = HttpRequest<wavex::protos::http::http1codec>;
+    using http1request = Http1Request;
 } // namespace wavex::protos::http

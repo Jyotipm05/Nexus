@@ -1,3 +1,8 @@
+﻿// Copyright (c) 2026 Jyotipriya Mondal
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 /**
  * @file HttpRouter.ixx
  * @brief C++ module interface for the HttpRouter component in WaveX.
@@ -18,5 +23,9 @@ export module wavex:http_router;
 
 export namespace wavex::engine {
     using wavex::engine::HttpProto;
+    using wavex::engine::Http1Proto;
+    using wavex::engine::http1proto;
     using wavex::engine::HttpRouter;
+    using wavex::engine::Http1Router;
+    using wavex::engine::http1router;
 }

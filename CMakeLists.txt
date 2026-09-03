@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 4.0)
-project(wavex VERSION 1.0.0 LANGUAGES CXX)
+project(wavex VERSION 0.3.0 LANGUAGES CXX)
+
+# ===========================================================================
+#  Header Configuration
+# ===========================================================================
+# Configure wavex.hpp.in to replace @PROJECT_VERSION@ with actual version
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/wavex/wavex.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/wavex/wavex.hpp"
+    @ONLY
+)
 
 # ===========================================================================
 #  Compiler & Tooling Setup
@@ -148,6 +158,7 @@ add_library(wavex
 )
 
 target_include_directories(wavex PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
@@ -185,6 +196,7 @@ target_sources(wavex
         include/wavex/Engine/Router.hpp
         include/wavex/Engine/HttpRouter.hpp
         include/wavex/protos/http/Methods.hpp
+        include/wavex/protos/http/http.hpp
         include/wavex/protos/http/http1codec.hpp
         include/wavex/protos/http/HttpRequest.hpp
         include/wavex/protos/http/HttpResponse.hpp
@@ -192,6 +204,7 @@ target_sources(wavex
         include/wavex/Server/ThreadPool.hpp
         include/wavex/Server/Server.hpp
         include/wavex/Client/HttpClient.hpp
+        include/wavex/Cli/Cli.hpp
 )
 
 # C++ Modules
@@ -213,6 +226,7 @@ target_sources(wavex
         src/Server/ThreadPool.ixx
         src/Base/MiddleWare.ixx
         src/Client/HttpClient.ixx
+        src/CLI/CLI.ixx
 )
 
 # ===========================================================================
@@ -225,6 +239,9 @@ install(TARGETS wavex EXPORT WaveXTargets
         LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
         ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 )
+
+# Install the configured wavex.hpp from the build directory
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/wavex/wavex.hpp" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/wavex")
 
 # If we used the Git fallback, we must ship the Asio headers to downstream consumers
 if (NOT asio_FOUND)
@@ -327,6 +344,7 @@ if (WAVEX_TEST)
         DEFINES PROJECT_DIR="${CMAKE_SOURCE_DIR}"
     )
     wavex_add_test(wavex_server_chunked_tests  tests/test_server_chunked.cpp)
+    wavex_add_test(wavex_cli_tests             tests/test_cli.cpp)
 
     # Interactive dev/Postman manual testing server (not a CTest target)
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)

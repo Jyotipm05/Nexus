@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file postman_demo_server.cpp
  * @brief Interactive WaveX HTTP Server for Postman & Manual Testing.
  *
@@ -15,7 +15,7 @@
  *  4. GET  | /api/protected             | None                                  | 401 Unauthorized (Pipeline short-circuit test)
  *  5. GET  | /api/protected             | Authorization: Bearer secret123       | 200 OK - Secret data (Access Granted)
  *  6. GET  | /users/:id                 | None                                  | 200 OK - Dynamic path parameter matching
- *  7. GET  | /files/*filepath           | None                                  | 200 OK - Wildcard catch-all match
+ *  7. GET  | /files/ *filepath          | None                                  | 200 OK - Wildcard catch-all match
  *          | (e.g. /files/docs/2026/r.pdf)|                                       |
  * ====================================================================================================
  */
@@ -30,16 +30,19 @@
 #include <wavex/wavex.hpp>
 
 using namespace wavex;
+using HttpRequest = protos::http::Http1Request;
+using HttpResponse = protos::http::Http1Response;
+using HttpRouter = engine::Http1Router;
 
 // Global Logger Middleware
-asio::awaitable<void> logger_middleware(protos::http::HttpRequest &req, protos::http::HttpResponse &res, base::Next next) {
+asio::awaitable<void> logger_middleware(const HttpRequest &req, const HttpResponse &res, base::Next next) {
     std::cout << "[LOG] Incoming request: " << req.path() << "\n";
     co_await next();
     std::cout << "[LOG] Response status: " << res.status_code() << " for " << req.path() << "\n";
 }
 
 // Auth Middleware (Postman header required: Authorization: Bearer secret123)
-asio::awaitable<void> auth_middleware(protos::http::HttpRequest &req, protos::http::HttpResponse &res, base::Next next) {
+asio::awaitable<void> auth_middleware(const HttpRequest &req, HttpResponse &res, base::Next next) {
     auto auth_header = req.header("Authorization");
     if (!auth_header || *auth_header != "Bearer secret123") {
         std::cout << "[AUTH] Unauthorized attempt on " << req.path() << "\n";
@@ -56,7 +59,7 @@ asio::awaitable<void> auth_middleware(protos::http::HttpRequest &req, protos::ht
 
 int main() {
     std::cout << "=========================================================================\n";
-    std::cout << "               WaveX Interactive Dev / Postman Server                    \n";
+    std::cout << ("               WaveX Interactive Dev v"+std::string(wx_version)+" / Postman Server                    \n");
     std::cout << "=========================================================================\n";
     std::cout << " Endpoints available for testing:\n";
     std::cout << "  1. GET  http://127.0.0.1:8080/\n";
@@ -67,16 +70,16 @@ int main() {
     std::cout << "  6. GET  http://127.0.0.1:8080/files/documents/2026/report.pdf  (Wildcard match)\n";
     std::cout << "=========================================================================\n\n";
 
-    auto &router = engine::HttpRouter::instance();
+    auto &router = HttpRouter::instance();
 
     // 1. Root route - Plain text
-    router.get("/", [](protos::http::HttpRequest &, protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/", [](HttpRequest &, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("Welcome to WaveX HTTP Server!");
         co_return;
     });
 
     // 2. JSON endpoint
-    router.get("/api/json", [](protos::http::HttpRequest &, protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/api/json", [](HttpRequest &, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({
             {"status", "success"},
             {"framework", "WaveX"},
@@ -87,7 +90,7 @@ int main() {
     });
 
     // 3. POST Echo endpoint (processes JSON body)
-    router.post("/api/echo", [](protos::http::HttpRequest &req, protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.post("/api/echo", [](const HttpRequest &req, HttpResponse &res) -> asio::awaitable<void> {
         std::string raw(req.body());
         nlohmann::json parsed_body;
 
@@ -111,7 +114,7 @@ int main() {
     });
 
     // 4. Protected route with Auth Middleware
-    router.get("/api/protected", {auth_middleware}, [](protos::http::HttpRequest &, protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/api/protected", {auth_middleware}, [](HttpRequest &, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({
             {"status", "granted"},
             {"secret_data", "Super secret information accessible only with valid auth header!"}
@@ -120,7 +123,7 @@ int main() {
     });
 
     // 5. Dynamic path parameter
-    router.get("/users/:id", [](protos::http::HttpRequest &req, protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/users/:id", [](const HttpRequest &req, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({
             {"endpoint", "user_details"},
             {"path", std::string(req.path())}
@@ -129,7 +132,7 @@ int main() {
     });
 
     // 6. Wildcard endpoint (*filepath matches any nested subpaths under /files/)
-    router.get("/files/*filepath", [](protos::http::HttpRequest &req, protos::http::HttpResponse &res) -> asio::awaitable<void> {
+    router.get("/files/*filepath", [](const HttpRequest &req, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).json({
             {"endpoint", "wildcard_file_handler"},
             {"matched_path", std::string(req.path())},
@@ -139,7 +142,7 @@ int main() {
     });
 
     try {
-        server::Server server(router, "127.0.0.1", 8080);
+        server::Http1Server server(router, "127.0.0.1", 8080);
         std::cout << "Server successfully listening on http://127.0.0.1:8080\n";
         std::cout << "Press Ctrl+C to stop.\n\n";
         server.run();

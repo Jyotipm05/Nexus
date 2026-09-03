@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file test_MW.cpp
  * @brief Tests for the wavex:middleware module partition.
  *
