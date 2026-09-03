@@ -1,11 +1,12 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * @file Response.hpp
- * @brief Defines the Response base class/interface for representing outgoing network responses.
+ * @brief Defines the Response base class for representing outgoing network responses using C++23 deducing this.
  *
  * Provides base abstractions for HTTP/WS response generation and header/body management.
  * Features a fluent API for method chaining: res.status(200).set("X-Foo", "bar").send("body").
@@ -26,45 +27,50 @@
 namespace wavex::base {
     /**
      * @class Response
-     * @brief Protocol-agnostic CRTP response builder with fluent API (zero-vtable overhead).
+     * @brief Protocol-agnostic C++23 "deducing this" response builder with fluent API (zero-vtable overhead).
      *
-     * Concrete protocol implementations inherit via CRTP:
-     * `class HttpResponse final : public base::Response<HttpResponse>`.
+     * Concrete protocol implementations inherit cleanly:
+     * `class HttpResponse final : public base::Response`.
      */
-    template <typename Derived>
     class Response {
-    public:
+    protected:
         ~Response() = default;
 
+    public:
         /// Set the response status code
-        Derived &status(const unsigned int code) {
-            status_code_ = code;
-            return static_cast<Derived &>(*this);
+        template <typename Self>
+        decltype(auto) status(this Self&& self, const unsigned int code) {
+            self.status_code_ = code;
+            return std::forward<Self>(self);
         }
 
         /// Set a response header (appends; does not deduplicate)
-        Derived &set(const std::string_view name, const std::string_view value) {
-            headers_.emplace_back(std::string(name), std::string(value));
-            return static_cast<Derived &>(*this);
+        template <typename Self>
+        decltype(auto) set(this Self&& self, const std::string_view name, const std::string_view value) {
+            self.headers_.emplace_back(std::string(name), std::string(value));
+            return std::forward<Self>(self);
         }
 
         /// Returns true if the response has already been sent
         [[nodiscard]] bool is_sent() const { return is_sent_; }
 
         /// Set the response body as plain text and mark as sent
-        Derived &send(const std::string_view body) {
-            return static_cast<Derived *>(this)->send_impl(body);
+        template <typename Self>
+        decltype(auto) send(this Self&& self, const std::string_view body) {
+            return std::forward<Self>(self).send_impl(body);
         }
 
         /// Set the response body as JSON — sets Content-Type automatically
-        Derived &json(const nlohmann::json &j) {
-            set("Content-Type", "application/json");
-            return send(j.dump());
+        template <typename Self>
+        decltype(auto) json(this Self&& self, const nlohmann::json &j) {
+            self.set("Content-Type", "application/json");
+            return std::forward<Self>(self).send(j.dump());
         }
 
         /// Serialize the response into the wire format (protocol-specific)
-        [[nodiscard]] std::string serialize() const {
-            return static_cast<const Derived *>(this)->serialize_impl();
+        template <typename Self>
+        [[nodiscard]] decltype(auto) serialize(this Self&& self) {
+            return std::forward<Self>(self).serialize_impl();
         }
 
         /// Access the current status code
@@ -93,7 +99,7 @@ namespace wavex::base {
 
     protected:
         unsigned int status_code_ = 200;
-        std::vector<std::pair<std::string, std::string> > headers_;
+        std::vector<std::pair<std::string, std::string>> headers_;
         std::string body_;
         bool is_sent_ = false;
     };

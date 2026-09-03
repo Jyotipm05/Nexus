@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -30,15 +30,15 @@ namespace wavex::protos::http {
      * @tparam Codec Protocol codec defining parser, encoder, decoder, request, and response types.
      */
     template <typename Codec = wavex::protos::http::http1codec>
-    class HttpRequest final : public base::Request<HttpRequest<Codec>> {
+    class HttpRequest final : public base::Request {
     public:
         using codec_type = Codec;
         using parser_type = typename Codec::parser;
         using encoder_type = typename Codec::encoder;
         using request_type = typename Codec::request;
 
-        using base_type = base::Request<HttpRequest<Codec>>;
-        using base_type::query;
+        using base::Request::query;
+        using base::Request::params;
 
         HttpRequest() = default;
 
@@ -118,8 +118,6 @@ namespace wavex::protos::http {
         [[nodiscard]] const request_type &raw() const { return parsed_; }
 
         [[nodiscard]] request_type &raw() { return parsed_; }
-
-        [[nodiscard]] http::request &raw() { return parsed_; }
 
     private:
         void extract_path_query(const std::string_view full_target) {

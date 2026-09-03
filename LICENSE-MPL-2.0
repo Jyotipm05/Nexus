@@ -1,12 +1,3 @@
-WaveX - High-Performance C++23 Backend Framework
-Copyright (c) 2026 Jyotipriya Mondal
-
-This Source Code Form is subject to the terms of the Mozilla Public
-License, v. 2.0. If a copy of the MPL was not distributed with this
-file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
-================================================================================
-
 Mozilla Public License Version 2.0
 ==================================
 
@@ -14,8 +5,8 @@ Mozilla Public License Version 2.0
 --------------
 
 1.1. "Contributor"
-    means each individual or entity that creates, contributes to the
-    creation of, or owns Modifications.
+    means each individual or legal entity that creates, contributes to
+    the creation of, or owns Covered Software.
 
 1.2. "Contributor Version"
     means the combination of the Contributions of others (if any) used
@@ -58,21 +49,31 @@ Mozilla Public License Version 2.0
 1.10. "Modifications"
     means any of the following:
 
-    (a) any addition to or deletion from the contents of a file containing
-        Covered Software or any new file in Source Code Form that contains
-        any Covered Software; or
+    (a) any file in Source Code Form that results from an addition to,
+        deletion from, or modification of the contents of Covered
+        Software; or
 
-    (b) any new file in Source Code Form that contains any portion of the
-        Covered Software.
+    (b) any new file in Source Code Form that contains any Covered
+        Software.
 
-1.11. "Original Software"
-    means the Source Code Form of a work as originally released by the
-    initial Contributor.
+1.11. "Patent Claims" of a Contributor
+    means any patent claim(s), including without limitation, method,
+    process, and apparatus claims, in any patent Licensable by such
+    Contributor that would be infringed, but for the grant of the
+    License, by the making, using, selling, offering for sale, having
+    made, import, or transfer of either its Contributions or its
+    Contributor Version.
 
-1.12. "Source Code Form"
+1.12. "Secondary License"
+    means either the GNU General Public License, Version 2.0, the GNU
+    Lesser General Public License, Version 2.1, the GNU Affero General
+    Public License, Version 3.0, or any later versions of those
+    licenses.
+
+1.13. "Source Code Form"
     means the form of the work preferred for making modifications.
 
-1.13. "You" (or "Your")
+1.14. "You" (or "Your")
     means an individual or a legal entity exercising rights under this
     License. For legal entities, "You" includes any entity that
     controls, is controlled by, or is under common control with You. For
@@ -96,8 +97,8 @@ non-exclusive license:
     Contributions, either on an unmodified basis, with Modifications, or
     as part of a Larger Work; and
 
-(b) under Patent Claims of such Contributor to make, use, sell, offer for
-    sale, have made, import, and otherwise transfer either its
+(b) under Patent Claims of such Contributor to make, use, sell, offer
+    for sale, have made, import, and otherwise transfer either its
     Contributions or its Contributor Version.
 
 2.2. Effective Date
@@ -111,9 +112,11 @@ distributes such Contribution.
 The licenses granted in this Section 2 are the only rights granted under
 this License. No additional rights or licenses will be implied from the
 distribution or licensing of Covered Software under this License.
-Notwithstanding Section 2.1(b) above, no patent license is granted:
+Notwithstanding Section 2.1(b) above, no patent license is granted by a
+Contributor:
 
-(a) for any code that You delete from the Covered Software; or
+(a) for any code that a Contributor has removed from Covered Software;
+    or
 
 (b) for infringements caused by: (i) Your and any other third party's
     modifications of Covered Software, or (ii) the combination of its
@@ -197,8 +200,8 @@ License(s).
 You may not remove or alter the substance of any license notices
 (including copyright notices, patent notices, disclaimers of warranty,
 or limitations of liability) contained within the Source Code Form of
-the Covered Software, except that You may alter any notices to the
-extent required to remedy known factual inaccuracies.
+the Covered Software, except that You may alter any license notices to
+the extent required to remedy known factual inaccuracies.
 
 3.5. Application of Additional Terms
 
@@ -208,10 +211,10 @@ Software. However, You may do so only on Your own behalf, and not on
 behalf of any Contributor. You must make it absolutely clear that any
 such warranty, support, indemnity, or liability obligation is offered by
 You alone, and You hereby agree to indemnify every Contributor for any
-liability incurred by such Contributor as a result of warranty,
-support, indemnity or liability terms You offer. You may include
-additional disclaimers of warranty and limitations of liability specific
-to any jurisdiction.
+liability incurred by such Contributor as a result of warranty, support,
+indemnity or liability terms You offer. You may include additional
+disclaimers of warranty and limitations of liability specific to any
+jurisdiction.
 
 4. Inability to Comply Due to Statute or Regulation
 ---------------------------------------------------
@@ -255,39 +258,47 @@ end user license agreements (excluding distributors and resellers) which
 have been validly granted by You or Your distributors under this License
 prior to termination shall survive termination.
 
-6. Disclaimer of Warranty
--------------------------
+************************************************************************
+*                                                                      *
+*  6. Disclaimer of Warranty                                           *
+*  -------------------------                                           *
+*                                                                      *
+*  Covered Software is provided under this License on an "as is"       *
+*  basis, without warranty of any kind, either expressed, implied, or  *
+*  statutory, including, without limitation, warranties that the       *
+*  Covered Software is free of defects, merchantable, fit for a        *
+*  particular purpose or non-infringing. The entire risk as to the     *
+*  quality and performance of the Covered Software is with You.        *
+*  Should any Covered Software prove defective in any respect, You     *
+*  (not any Contributor) assume the cost of any necessary servicing,   *
+*  repair, or correction. This disclaimer of warranty constitutes an   *
+*  essential part of this License. No use of any Covered Software is   *
+*  authorized under this License except under this disclaimer.         *
+*                                                                      *
+************************************************************************
 
-Covered Software is provided under this License on an "as is"
-basis, without warranty of any kind, either expressed, implied, or
-statutory, including, without limitation, warranties that the
-Covered Software is free of defects, merchantable, fit for a
-particular purpose or non-infringing. The entire risk as to the
-quality and performance of the Covered Software is with You.
-Should any Covered Software prove defective in any respect, You
-(not any Contributor) assume the cost of any necessary servicing,
-repair, or correction. This disclaimer of warranty constitutes an
-essential part of this License. No use of any Covered Software is
-authorized under this License except under this disclaimer.
-
-7. Limitation of Liability
---------------------------
-
-Under no circumstances and under no legal theory, whether tort
-(including negligence), contract, or otherwise, shall any
-Contributor, or anyone who distributes Covered Software as
-permitted above, be liable to You for any direct, indirect,
-special, incidental, or consequential damages of any character
-including, without limitation, damages for lost profits, loss of
-goodwill, work stoppage, computer failure or malfunction, or any
-and all other commercial damages or losses, even if such party
-shall have been informed of the possibility of such damages. This
-limitation of liability shall not apply to liability for death or
-personal injury resulting from such party's negligence to the
-extent applicable law prohibits such limitation. Some
-jurisdictions do not allow the exclusion or limitation of
-incidental or consequential damages, so this exclusion and
-limitation may not apply to You.
+************************************************************************
+*                                                                      *
+*  7. Limitation of Liability                                          *
+*  --------------------------                                          *
+*                                                                      *
+*  Under no circumstances and under no legal theory, whether tort      *
+*  (including negligence), contract, or otherwise, shall any           *
+*  Contributor, or anyone who distributes Covered Software as          *
+*  permitted above, be liable to You for any direct, indirect,         *
+*  special, incidental, or consequential damages of any character      *
+*  including, without limitation, damages for lost profits, loss of    *
+*  goodwill, work stoppage, computer failure or malfunction, or any    *
+*  and all other commercial damages or losses, even if such party      *
+*  shall have been informed of the possibility of such damages. This   *
+*  limitation of liability shall not apply to liability for death or   *
+*  personal injury resulting from such party's negligence to the       *
+*  extent applicable law prohibits such limitation. Some               *
+*  jurisdictions do not allow the exclusion or limitation of           *
+*  incidental or consequential damages, so this exclusion and          *
+*  limitation may not apply to You.                                    *
+*                                                                      *
+************************************************************************
 
 8. Litigation
 -------------
@@ -314,10 +325,10 @@ shall not be used to construe this License against a Contributor.
 
 10.1. New Versions
 
-Mozilla Foundation is the license steward. Except as provided in
-Section 10.3, no one other than the license steward has the right to
-modify or publish new versions of this License. Each version will be
-given a distinguishing version number.
+Mozilla Foundation is the license steward. Except as provided in Section
+10.3, no one other than the license steward has the right to modify or
+publish new versions of this License. Each version will be given a
+distinguishing version number.
 
 10.2. Effect of New Versions
 
@@ -332,7 +343,7 @@ If you create software not governed by this License, and you want to
 create a new license for such software, you may create and use a
 modified version of this License if you rename the license and remove
 any references to the name of the license steward (except to note that
-such license differs from this License).
+such modified license differs from this License).
 
 10.4. Distributing Source Code Form that is Incompatible With Secondary
 Licenses
@@ -346,7 +357,7 @@ Exhibit A - Source Code Form License Notice
 
   This Source Code Form is subject to the terms of the Mozilla Public
   License, v. 2.0. If a copy of the MPL was not distributed with this
-  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 If it is not possible or desirable to put the notice in a particular
 file, then You may include the notice in a location (such as a LICENSE
