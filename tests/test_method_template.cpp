@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file test_method_template.cpp
  * @brief Unit tests for the wavex::engine::Router and HttpRouter class template.
  *
@@ -29,14 +29,14 @@
 
 // ─── Minimal concrete stubs for testing ──────────────────────────────────────
 
-struct [[maybe_unused]] TestRequest final : wavex::base::Request<TestRequest> {
+struct [[maybe_unused]] TestRequest final : wavex::base::Request {
     std::string path_val;
     [[nodiscard]] std::string_view path_impl() const { return path_val; }
     [[nodiscard]] std::optional<std::string_view> header_impl(std::string_view) const { return std::nullopt; }
     [[nodiscard]] std::string_view body_impl() const { return {}; }
 };
 
-struct [[maybe_unused]] TestResponse final : wavex::base::Response<TestResponse> {
+struct [[maybe_unused]] TestResponse final : wavex::base::Response {
     [[nodiscard]] std::string serialize_impl() const {
         return "HTTP/1.1 " + std::to_string(status_code_) + "\r\n\r\n" + body_;
     }

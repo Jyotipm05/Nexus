@@ -2,7 +2,7 @@
 
 A modern, high-performance C++23 backend framework built for coroutine-native HTTP servers & clients, Express.js-style pipeline execution, extensible protocol support, and powerful CLI tooling.
 
-WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), **Tokio** (lock-free dual-queue runtime with hysteresis-based thread scaling), and **Express.js** (linear middleware chain with immediate response dispatching).
+WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), **Tokio** (hybrid work-stealing dual-queue runtime with hysteresis-based thread scaling), and **Express.js** (linear middleware chain with immediate response dispatching).
 
 [![Version: v0.3.0](https://img.shields.io/badge/Version-v0.3.0-orange.svg)](RELEASE_NOTES.md)
 [![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-blue.svg)](LICENSE)
@@ -21,9 +21,9 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 - **📦 Chunked Transfer-Encoding** — Full streaming support for HTTP/1.1 chunked request and response encoding & decoding.
 - **🗂 MIME Type Detection Engine** — Fast, built-in file extension to MIME content-type resolver (`MimeTypes.hpp`) supporting over 50+ common web media types.
 - **🛠 Modern CLI Framework** — Built-in declarative CLI command engine (`wavex::cli::App`) with nested subcommands, typed flag parsing, required argument validation, and automatic help generation.
-- **🧵 Tokio-Style Lock-Free Dual-Queue Runtime** —
-  - **`LocalQueue`**: Bounded 256-slot lock-free ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
-  - **`InjectorQueue`**: Unbounded global MPMC queue with lock-free atomic size tracking for external tasks and overflow.
+- **🧵 Tokio-Style Work-Stealing Dual-Queue Runtime** —
+  - **`LocalQueue`**: Bounded 256-slot ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
+  - **`InjectorQueue`**: Unbounded global MPMC queue with atomic size tracking for external tasks and overflow.
   - **Zero Request Loss on Scale-Down**: Retiring workers safely drain their remaining local ring tasks back into `InjectorQueue` on thread exit.
 - **🛡 Pipeline Short-Circuiting** — Middleware rejection (e.g. `401 Unauthorized`) immediately sends the response while skipping downstream middlewares and route handlers.
 - **📦 C++20/C++23 Modules & Headers** — Dual distribution models: standard C++ header inclusions (`#include <wavex/wavex.hpp>`) and modern C++ module partitions (`import wavex;`).
@@ -33,7 +33,7 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 
 ## Quick Start
 
-### 1. HTTP Server & Middleware
+### 1. HTTP Server & Coroutine Middleware
 
 ```cpp
 #include <iostream>
@@ -79,14 +79,79 @@ int main() {
     });
 
     server::Server server(router, "127.0.0.1", 8080);
-    std::cout << "WaveX server running on http://127.0.0.1:8080\n";
+    wavex::log::info("WaveX server running on http://127.0.0.1:8080");
     server.run();
 
     return 0;
 }
 ```
 
-### 2. Async HTTP Client
+### 2. Modern Logging with Source Location & Colors
+
+Zero-macro, high-performance logging with automatic `std::source_location` call-site capture and ANSI terminal colors:
+
+```cpp
+#include <wavex/Base/Logger.hpp>
+
+int main() {
+    // Configure minimum log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)
+    wavex::base::Logger::instance().set_level(wavex::base::LogLevel::DEBUG);
+
+    // Modern functional logging API
+    wavex::log::trace("Buffer allocated: {} bytes", 1024);
+    wavex::log::debug("Route match resolved in {} us", 12.4);
+    wavex::log::info("Worker pool online: {} threads", 8);
+    wavex::log::warn("Slow database query detected ({}ms)", 235);
+    wavex::log::error("Connection reset by peer: fd={}", 14);
+
+    // Optional: direct logs to file or custom stream
+    // wavex::base::Logger::instance().set_output("./logs/wavex.log");
+
+    return 0;
+}
+```
+
+### 3. C++23 "Deducing This" Static Pipelines (`class Chainable`)
+
+Build compile-time static dispatch pipelines without vtables or heap allocations:
+
+```cpp
+#include <wavex/Base/Chainable.hpp>
+#include <wavex/Base/Logger.hpp>
+#include <tuple>
+
+// 1. Concrete Handler inheriting from class Chainable
+class TokenValidator : public wavex::Chainable {
+public:
+    std::string_view name_impl() const { return "TokenValidator"; }
+
+    template <typename Context>
+    bool handle_impl(Context& ctx) const {
+        if (ctx.token != "valid-token") {
+            wavex::log::warn("[{}] Rejected unauthorized token", name());
+            return false;
+        }
+        return true;
+    }
+};
+
+// 2. Static Pipeline executing via fold expressions
+template <typename... Handlers>
+class StaticChain {
+    std::tuple<Handlers...> handlers_;
+public:
+    constexpr explicit StaticChain(Handlers... h) : handlers_(std::move(h)...) {}
+
+    template <typename Context>
+    bool process(Context& ctx) {
+        return std::apply([&ctx](auto&... handler) {
+            return (handler.handle(ctx) && ...); // Direct non-virtual inlined dispatch
+        }, handlers_);
+    }
+};
+```
+
+### 4. Async HTTP Client
 
 ```cpp
 #include <iostream>
@@ -109,7 +174,7 @@ asio::awaitable<void> fetch_data(asio::io_context &ioc) {
 }
 ```
 
-### 3. Command-Line Interface (CLI) Engine
+### 5. Command-Line Interface (CLI) Engine
 
 ```cpp
 #include <wavex/Cli/Cli.hpp>
@@ -130,6 +195,20 @@ int main(int argc, char* argv[]) {
     });
 
     return app.run(argc, argv);
+}
+```
+
+### 6. C++23 Modules Quick Start
+
+WaveX fully supports C++23 module imports for ultra-fast compilation:
+
+```cpp
+import wavex;
+#include <iostream>
+
+int main() {
+    wavex::log::info("WaveX version: {}", wavex::wx_version);
+    return 0;
 }
 ```
 
@@ -217,8 +296,8 @@ graph LR
 | `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`) & linear pipeline |
 | `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex & wildcard (`*filepath`) matching |
 | `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, etc.) |
-| `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot lock-free bounded ring buffer |
-| `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with lock-free atomic size tracking |
+| `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot ring buffer for ultra-fast task stealing |
+| `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
 | `Server/Server` | ✅ Complete | Coroutine TCP server with master acceptor & slave worker pool |
 | `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder & Chunked Transfer-Encoding |

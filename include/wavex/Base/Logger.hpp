@@ -1,15 +1,16 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * @file Logger.hpp
- * @brief Trantor-style leveled logger for WaveX.
+ * @brief Modernized leveled logger for WaveX with C++23 source_location and zero-macro API.
  *
- * Provides 6 severity levels (TRACE -> FATAL), a global singleton,
- * thread-safe output, and WX_LOG_* convenience macros. Higher levels
- * are for production, lower levels for development and debugging.
+ * Provides 6 severity levels (TRACE -> FATAL), global singleton, thread-safe
+ * output, ANSI terminal styling, automatic source location capture, and both
+ * modern functional API (wavex::log::*) and legacy WX_LOG_* macros.
  */
 
 #pragma once
@@ -26,6 +27,25 @@
 #include <source_location>
 #include <cstdlib>
 #include <filesystem>
+#include <type_traits>
+
+// Windows SDK headers (pulled in via ASIO/winsock) define these names as macros.
+// Save and undef them so the enum class members below compile cleanly on MSVC.
+#ifdef ERROR
+#  pragma push_macro("ERROR")
+#  undef ERROR
+#  define WAVEX_LOGGER_HAD_ERROR
+#endif
+#ifdef DEBUG
+#  pragma push_macro("DEBUG")
+#  undef DEBUG
+#  define WAVEX_LOGGER_HAD_DEBUG
+#endif
+#ifdef TRACE
+#  pragma push_macro("TRACE")
+#  undef TRACE
+#  define WAVEX_LOGGER_HAD_TRACE
+#endif
 
 namespace wavex::base {
     /**
@@ -35,10 +55,10 @@ namespace wavex::base {
     enum class LogLevel : uint8_t {
         TRACE = 0, ///< Fine-grained debug: function entry/exit, buffer dumps
         DEBUG = 1, ///< Development diagnostics: route matching, codec details
-        INFO = 2, ///< Lifecycle events: startup, listening, worker counts
-        WARN = 3, ///< Recoverable issues: timeouts, retries, deprecation
-        ERROR = 4, ///< Request failures, socket errors, parse failures
-        FATAL = 5 ///< Unrecoverable — logs then calls std::abort()
+        INFO  = 2, ///< Lifecycle events: startup, listening, worker counts
+        WARN  = 3, ///< Recoverable issues: timeouts, retries, deprecation
+        ERR   = 4, ///< Request failures, socket errors, parse failures
+        FATAL = 5  ///< Unrecoverable — logs then calls std::abort()
     };
 
     /**
@@ -48,21 +68,34 @@ namespace wavex::base {
         switch (lvl) {
             case LogLevel::TRACE: return "TRACE";
             case LogLevel::DEBUG: return "DEBUG";
-            case LogLevel::INFO: return "INFO ";
-            case LogLevel::WARN: return "WARN ";
-            case LogLevel::ERROR: return "ERROR";
+            case LogLevel::INFO:  return "INFO ";
+            case LogLevel::WARN:  return "WARN ";
+            case LogLevel::ERR:   return "ERROR";
             case LogLevel::FATAL: return "FATAL";
-            default: return "?????";
+            default:              return "?????";
         }
     }
 
     /**
+     * @brief Returns ANSI color code for a log level.
+     */
+    constexpr std::string_view log_level_color(LogLevel lvl) {
+        switch (lvl) {
+            case LogLevel::TRACE: return "\033[36m";   // Cyan
+            case LogLevel::DEBUG: return "\033[34m";   // Blue
+            case LogLevel::INFO:  return "\033[32m";   // Green
+            case LogLevel::WARN:  return "\033[33m";   // Yellow
+            case LogLevel::ERR:   return "\033[31m";   // Red
+            case LogLevel::FATAL: return "\033[1;31m"; // Bold Red
+            default:              return "\033[0m";
+        }
+    }
+
+    constexpr std::string_view ansi_reset = "\033[0m";
+
+    /**
      * @class Logger
-     * @brief Thread-safe, singleton logger with leveled output.
-     *
-     * Usage:
-     *   Logger::instance().set_level(LogLevel::DEBUG);
-     *   WX_LOG_INFO("Server listening on port {}", 8080);
+     * @brief Thread-safe, singleton logger with leveled output and source location support.
      */
     class Logger {
     public:
@@ -77,6 +110,12 @@ namespace wavex::base {
 
         /// Get the current minimum log level
         [[nodiscard]] LogLevel level() const { return min_level_; }
+
+        /// Enable or disable ANSI terminal colors
+        void set_colored(bool enable) { colored_ = enable; }
+
+        /// Check if ANSI colors are enabled
+        [[nodiscard]] bool colored() const { return colored_; }
 
         /// Direct output to a different stream (default: std::cerr)
         void set_output(std::ostream &os) {
@@ -95,13 +134,30 @@ namespace wavex::base {
         }
 
         /**
-         * @brief Core logging function. Formats the message, prepends
-         *        timestamp + level + thread ID, and writes to sink.
-         *
-         * @tparam Args  Format argument types
-         * @param lvl    Severity level
-         * @param fmt    std::format-compatible format string
-         * @param args   Format arguments
+         * @brief Core logging function with std::source_location.
+         */
+        template<typename... Args>
+        void log_loc(const LogLevel lvl,
+                     const std::source_location &loc,
+                     std::format_string<Args...> fmt,
+                     Args &&... args) {
+            if (lvl < min_level_) return;
+            const std::string user_msg = std::format(fmt, std::forward<Args>(args)...);
+            write_loc(lvl, loc, user_msg);
+        }
+
+        /**
+         * @brief Overload for string_view message with std::source_location.
+         */
+        void log_loc(const LogLevel lvl,
+                     const std::source_location &loc,
+                     const std::string_view msg) {
+            if (lvl < min_level_) return;
+            write_loc(lvl, loc, msg);
+        }
+
+        /**
+         * @brief Core logging function without explicit source location (backward compatible).
          */
         template<typename... Args>
         void log(const LogLevel lvl,
@@ -121,20 +177,56 @@ namespace wavex::base {
         }
 
         Logger(const Logger &) = delete;
-
         Logger &operator=(const Logger &) = delete;
 
     private:
         Logger() = default;
+
+        static std::string_view extract_filename(std::string_view filepath) {
+            auto pos = filepath.find_last_of("/\\");
+            return (pos == std::string_view::npos) ? filepath : filepath.substr(pos + 1);
+        }
+
+        void write_loc(const LogLevel lvl, const std::source_location &loc, std::string_view msg) {
+            const auto now = std::chrono::system_clock::now();
+            auto time = std::chrono::floor<std::chrono::milliseconds>(now);
+            auto tid = std::this_thread::get_id();
+            auto filename = extract_filename(loc.file_name());
+
+            std::string line;
+            if (colored_ && !file_sink_.has_value()) {
+                // Format: [2026-06-13 15:30:05.123] [INFO ] [tid:1234] [file.cpp:42] message
+                line = std::format("{}[{}] [{}] [tid:{}] [{}:{}] {}{}\n",
+                                   log_level_color(lvl),
+                                   time, log_level_tag(lvl), tid,
+                                   filename, loc.line(),
+                                   msg, ansi_reset);
+            } else {
+                line = std::format("[{}] [{}] [tid:{}] [{}:{}] {}\n",
+                                   time, log_level_tag(lvl), tid,
+                                   filename, loc.line(), msg);
+            }
+
+            std::lock_guard lock(mutex_);
+            (*sink_) << line;
+            sink_->flush();
+        }
 
         void write(const LogLevel lvl, std::string_view msg) {
             const auto now = std::chrono::system_clock::now();
             auto time = std::chrono::floor<std::chrono::milliseconds>(now);
             auto tid = std::this_thread::get_id();
 
-            // Format: [2026-06-13 15:30:05.123] [INFO ] [tid:1234] message
-            const std::string line = std::format("[{}] [{}] [tid:{}] {}\n",
-                                                 time, log_level_tag(lvl), tid, msg);
+            std::string line;
+            if (colored_ && !file_sink_.has_value()) {
+                line = std::format("{}[{}] [{}] [tid:{}] {}{}\n",
+                                   log_level_color(lvl),
+                                   time, log_level_tag(lvl), tid,
+                                   msg, ansi_reset);
+            } else {
+                line = std::format("[{}] [{}] [tid:{}] {}\n",
+                                   time, log_level_tag(lvl), tid, msg);
+            }
 
             std::lock_guard lock(mutex_);
             (*sink_) << line;
@@ -142,38 +234,137 @@ namespace wavex::base {
         }
 
         LogLevel min_level_ = LogLevel::INFO;
+        bool colored_ = true;
         std::ostream *sink_ = &std::cerr;
         std::optional<std::ofstream> file_sink_;
         std::mutex mutex_;
     };
-}
+} // namespace wavex::base
 
+// Restore the Windows macros that were saved above, using the sentinel guards.
+#ifdef WAVEX_LOGGER_HAD_TRACE
+#  pragma pop_macro("TRACE")
+#  undef WAVEX_LOGGER_HAD_TRACE
+#endif
+#ifdef WAVEX_LOGGER_HAD_DEBUG
+#  pragma pop_macro("DEBUG")
+#  undef WAVEX_LOGGER_HAD_DEBUG
+#endif
+#ifdef WAVEX_LOGGER_HAD_ERROR
+#  pragma pop_macro("ERROR")
+#  undef WAVEX_LOGGER_HAD_ERROR
+#endif
 
-/**  Convenience macros — compile-time level check via if constexpr isn't
- *  possible with runtime level, so we use a cheap runtime branch.
- *  The format call is only evaluated if the level passes.
+/**
+ * @namespace wavex::log
+ * @brief Modern zero-macro logging interface with automatic source_location capture.
  */
+namespace wavex::log {
 
+    template <typename... Args>
+    struct format_with_loc {
+        std::format_string<Args...> fmt;
+        std::source_location loc;
+
+        template <typename T>
+            requires std::constructible_from<std::format_string<Args...>, T>
+        consteval format_with_loc(const T& s, std::source_location l = std::source_location::current())
+            : fmt(s), loc(l) {}
+    };
+
+    struct msg_with_loc {
+        std::string_view msg;
+        std::source_location loc;
+
+        template <typename T>
+            requires std::convertible_to<T, std::string_view>
+        constexpr msg_with_loc(const T& s, std::source_location l = std::source_location::current())
+            : msg(s), loc(l) {}
+    };
+
+    // --- Modern Log Functions (Formatted) ---
+
+    template <typename... Args>
+    inline void trace(format_with_loc<std::type_identity_t<Args>...> fwl, Args&&... args) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::TRACE, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
+    }
+
+    inline void trace(msg_with_loc mwl) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::TRACE, mwl.loc, mwl.msg);
+    }
+
+    template <typename... Args>
+    inline void debug(format_with_loc<std::type_identity_t<Args>...> fwl, Args&&... args) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::DEBUG, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
+    }
+
+    inline void debug(msg_with_loc mwl) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::DEBUG, mwl.loc, mwl.msg);
+    }
+
+    template <typename... Args>
+    inline void info(format_with_loc<std::type_identity_t<Args>...> fwl, Args&&... args) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::INFO, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
+    }
+
+    inline void info(msg_with_loc mwl) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::INFO, mwl.loc, mwl.msg);
+    }
+
+    template <typename... Args>
+    inline void warn(format_with_loc<std::type_identity_t<Args>...> fwl, Args&&... args) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::WARN, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
+    }
+
+    inline void warn(msg_with_loc mwl) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::WARN, mwl.loc, mwl.msg);
+    }
+
+    template <typename... Args>
+    inline void error(format_with_loc<std::type_identity_t<Args>...> fwl, Args&&... args) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::ERR, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
+    }
+
+    inline void error(msg_with_loc mwl) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::ERR, mwl.loc, mwl.msg);
+    }
+
+    template <typename... Args>
+    [[noreturn]] inline void fatal(format_with_loc<std::type_identity_t<Args>...> fwl, Args&&... args) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::FATAL, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
+        std::abort();
+    }
+
+    [[noreturn]] inline void fatal(msg_with_loc mwl) {
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::FATAL, mwl.loc, mwl.msg);
+        std::abort();
+    }
+
+} // namespace wavex::log
+
+/**
+ * Convenience macros for legacy compatibility.
+ */
 #define WX_LOG_TRACE(...) \
     do { if (::wavex::base::Logger::instance().level() <= ::wavex::base::LogLevel::TRACE) \
-        ::wavex::base::Logger::instance().log(::wavex::base::LogLevel::TRACE, __VA_ARGS__); } while(0)
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::TRACE, std::source_location::current(), __VA_ARGS__); } while(0)
 
 #define WX_LOG_DEBUG(...) \
     do { if (::wavex::base::Logger::instance().level() <= ::wavex::base::LogLevel::DEBUG) \
-        ::wavex::base::Logger::instance().log(::wavex::base::LogLevel::DEBUG, __VA_ARGS__); } while(0)
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::DEBUG, std::source_location::current(), __VA_ARGS__); } while(0)
 
 #define WX_LOG_INFO(...) \
     do { if (::wavex::base::Logger::instance().level() <= ::wavex::base::LogLevel::INFO) \
-        ::wavex::base::Logger::instance().log(::wavex::base::LogLevel::INFO, __VA_ARGS__); } while(0)
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::INFO, std::source_location::current(), __VA_ARGS__); } while(0)
 
 #define WX_LOG_WARN(...) \
     do { if (::wavex::base::Logger::instance().level() <= ::wavex::base::LogLevel::WARN) \
-        ::wavex::base::Logger::instance().log(::wavex::base::LogLevel::WARN, __VA_ARGS__); } while(0)
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::WARN, std::source_location::current(), __VA_ARGS__); } while(0)
 
 #define WX_LOG_ERROR(...) \
-    do { if (::wavex::base::Logger::instance().level() <= ::wavex::base::LogLevel::ERROR) \
-        ::wavex::base::Logger::instance().log(::wavex::base::LogLevel::ERROR, __VA_ARGS__); } while(0)
+    do { if (::wavex::base::Logger::instance().level() <= ::wavex::base::LogLevel::ERR) \
+        ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::ERR, std::source_location::current(), __VA_ARGS__); } while(0)
 
 #define WX_LOG_FATAL(...) \
-    do { ::wavex::base::Logger::instance().log(::wavex::base::LogLevel::FATAL, __VA_ARGS__); \
+    do { ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::FATAL, std::source_location::current(), __VA_ARGS__); \
          std::abort(); } while(0)

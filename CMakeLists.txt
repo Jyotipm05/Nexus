@@ -95,6 +95,7 @@ if (NOT nlohmann_json_FOUND)
     message(STATUS "nlohmann_json not found via find_package — fetching from GitHub")
     FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3 GIT_SHALLOW TRUE)
     set(JSON_BuildTests OFF CACHE INTERNAL "")
+    set(JSON_Install ON CACHE INTERNAL "")
     FetchContent_MakeAvailable(nlohmann_json)
 endif ()
 
@@ -110,6 +111,8 @@ if (NOT re2_FOUND)
     find_package(absl CONFIG QUIET)
     if (NOT absl_FOUND)
         message(STATUS "absl not found — fetching from GitHub (Required by RE2)")
+        set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
+        set(ABSL_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
         FetchContent_Declare(
                 absl
                 GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
@@ -191,6 +194,8 @@ target_sources(wavex
         PUBLIC FILE_SET public_headers TYPE HEADERS
         BASE_DIRS include
         FILES
+        include/wavex/Base/Logger.hpp
+        include/wavex/Base/Chainable.hpp
         include/wavex/Base/MiddleWare.hpp
         include/wavex/Base/MimeTypes.hpp
         include/wavex/Engine/Router.hpp
@@ -213,6 +218,8 @@ target_sources(wavex
         BASE_DIRS src
         FILES
         src/wavex.ixx
+        src/Base/Logger.ixx
+        src/Base/Chainable.ixx
         src/protos/protos.ixx
         src/protos/http/http.ixx
         src/protos/http/Methods.ixx
@@ -345,6 +352,8 @@ if (WAVEX_TEST)
     )
     wavex_add_test(wavex_server_chunked_tests  tests/test_server_chunked.cpp)
     wavex_add_test(wavex_cli_tests             tests/test_cli.cpp)
+    wavex_add_test(wavex_chainable_tests       tests/test_chainable.cpp)
+    wavex_add_test(wavex_logger_tests          tests/test_logger_modern.cpp)
 
     # Interactive dev/Postman manual testing server (not a CTest target)
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)

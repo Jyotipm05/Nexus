@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -23,19 +23,16 @@
 
 #include <asio/awaitable.hpp>
 
-// Forward declarations of CRTP base templates
+// Forward declarations of Request and Response base classes
 namespace wavex::base {
-    template <typename Derived>
     class Request;
-
-    template <typename Derived>
     class Response;
 
     /// Callable that invokes the next middleware or the final handler
     using Next = std::function<asio::awaitable<void>()>;
 
     /**
-     * @brief Generic middleware function signature for CRTP Request and Response types.
+     * @brief Generic middleware function signature for Request and Response types.
      *
      * Usage:
      *   auto logger = [](ReqT &req, ResT &res, Next next) -> asio::awaitable<void> {

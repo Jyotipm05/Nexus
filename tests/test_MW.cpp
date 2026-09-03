@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file test_MW.cpp
  * @brief Tests for the wavex:middleware module partition.
  *
@@ -34,14 +34,14 @@
 
 // ─── Minimal concrete stubs ───────────────────────────────────────────────────
 
-struct StubRequest final : wavex::base::Request<StubRequest> {
+struct StubRequest final : wavex::base::Request {
     std::string path_val;
     [[nodiscard]] std::string_view path_impl() const { return path_val; }
     [[nodiscard]] std::optional<std::string_view> header_impl(std::string_view) const { return std::nullopt; }
     [[nodiscard]] std::string_view body_impl() const { return {}; }
 };
 
-struct StubResponse final : wavex::base::Response<StubResponse> {
+struct StubResponse final : wavex::base::Response {
     std::vector<std::string> *sent_log = nullptr;
 
     StubResponse &send_impl(const std::string_view body) {
