@@ -289,7 +289,7 @@ namespace wavex::log {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::TRACE, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
     }
 
-    inline void trace(msg_with_loc mwl) {
+    inline void trace(const msg_with_loc &mwl) {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::TRACE, mwl.loc, mwl.msg);
     }
 
@@ -298,7 +298,7 @@ namespace wavex::log {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::DEBUG, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
     }
 
-    inline void debug(msg_with_loc mwl) {
+    inline void debug(const msg_with_loc &mwl) {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::DEBUG, mwl.loc, mwl.msg);
     }
 
@@ -307,7 +307,7 @@ namespace wavex::log {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::INFO, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
     }
 
-    inline void info(msg_with_loc mwl) {
+    inline void info(const msg_with_loc &mwl) {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::INFO, mwl.loc, mwl.msg);
     }
 
@@ -316,7 +316,7 @@ namespace wavex::log {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::WARN, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
     }
 
-    inline void warn(msg_with_loc mwl) {
+    inline void warn(const msg_with_loc &mwl) {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::WARN, mwl.loc, mwl.msg);
     }
 
@@ -325,7 +325,7 @@ namespace wavex::log {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::ERR, fwl.loc, fwl.fmt, std::forward<Args>(args)...);
     }
 
-    inline void error(msg_with_loc mwl) {
+    inline void error(const msg_with_loc &mwl) {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::ERR, mwl.loc, mwl.msg);
     }
 
@@ -335,7 +335,7 @@ namespace wavex::log {
         std::abort();
     }
 
-    [[noreturn]] inline void fatal(msg_with_loc mwl) {
+    [[noreturn]] inline void fatal(const msg_with_loc &mwl) {
         ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::FATAL, mwl.loc, mwl.msg);
         std::abort();
     }
@@ -368,3 +368,5 @@ namespace wavex::log {
 #define WX_LOG_FATAL(...) \
     do { ::wavex::base::Logger::instance().log_loc(::wavex::base::LogLevel::FATAL, std::source_location::current(), __VA_ARGS__); \
          std::abort(); } while(0)
+
+namespace wxlog = wavex::log;
