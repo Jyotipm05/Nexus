@@ -136,14 +136,21 @@ if (NOT re2_FOUND)
 endif ()
 
 # ---------------------------------------------------------------------------
-# OpenSSL
+# OpenSSL (TLS 1.3 Support)
 # ---------------------------------------------------------------------------
-find_package(OpenSSL QUIET)
-if (OpenSSL_FOUND)
-    message(STATUS "OpenSSL found: ${OPENSSL_VERSION}")
-    set(WAVEX_HAS_SSL ON)
+option(WAVEX_ENABLE_TLS "Enable TLS 1.3 support via OpenSSL" ON)
+
+if (WAVEX_ENABLE_TLS)
+    find_package(OpenSSL QUIET)
+    if (OpenSSL_FOUND)
+        message(STATUS "OpenSSL found: ${OPENSSL_VERSION}")
+        set(WAVEX_HAS_SSL ON)
+    else ()
+        message(WARNING "OpenSSL requested but not found — TLS features will be compiled out.")
+        set(WAVEX_HAS_SSL OFF)
+    endif ()
 else ()
-    message(WARNING "OpenSSL not found — TLS features will be compiled out.")
+    message(STATUS "WAVEX_ENABLE_TLS is OFF — compiling without TLS support.")
     set(WAVEX_HAS_SSL OFF)
 endif ()
 
@@ -207,6 +214,7 @@ target_sources(wavex
         include/wavex/protos/http/HttpResponse.hpp
         include/wavex/Server/WorkStealingQueue.hpp
         include/wavex/Server/ThreadPool.hpp
+        include/wavex/Server/TlsConfig.hpp
         include/wavex/Server/Server.hpp
         include/wavex/Client/HttpClient.hpp
         include/wavex/Cli/Cli.hpp
@@ -338,7 +346,7 @@ if (WAVEX_TEST)
                 ENVIRONMENT  "${WAVEX_SAN_ENV}"
             )
         endif ()
-    endfunction()
+        endfunction()
 
     # -----------------------------------------------------------------------
     # Test registrations
@@ -358,4 +366,9 @@ if (WAVEX_TEST)
     # Interactive dev/Postman manual testing server (not a CTest target)
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)
     target_link_libraries(wavex_postman_server PRIVATE wavex)
+
+    # Interactive dev/Postman manual TLS testing server (not a CTest target)
+    add_executable(wavex_postman_tls_server tests/postman_demo_tls_server.cpp)
+    target_link_libraries(wavex_postman_tls_server PRIVATE wavex)
+    target_compile_definitions(wavex_postman_tls_server PRIVATE PROJECT_DIR="${CMAKE_SOURCE_DIR}")
 endif ()

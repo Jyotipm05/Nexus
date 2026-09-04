@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -13,6 +13,10 @@
 #include <wavex/Client/HttpClient.hpp>
 #include <asio/write.hpp>
 #include <asio/connect.hpp>
+
+#if defined(WAVEX_HAS_SSL) && WAVEX_HAS_SSL
+#include <asio/ssl.hpp>
+#endif
 
 namespace wavex::client {
 
@@ -60,6 +64,56 @@ namespace wavex::client {
 
         auto executor = co_await asio::this_coro::executor;
         asio::ip::tcp::resolver resolver(executor);
+
+#if defined(WAVEX_HAS_SSL) && WAVEX_HAS_SSL
+        if (parsed_url.scheme == "https") {
+            try {
+                asio::ssl::context ssl_ctx(asio::ssl::context::tlsv13_client);
+                ssl_ctx.set_verify_mode(asio::ssl::verify_none);
+
+                asio::ssl::stream<asio::ip::tcp::socket> ssl_socket(executor, ssl_ctx);
+                if (!SSL_set_tlsext_host_name(ssl_socket.native_handle(), host.c_str())) {
+                    res.status(500).send("Internal Error: Failed to set TLS SNI hostname");
+                    co_return std::move(res);
+                }
+
+                auto endpoints = co_await resolver.async_resolve(host, port_str, asio::use_awaitable);
+                co_await asio::async_connect(ssl_socket.lowest_layer(), endpoints, asio::use_awaitable);
+                co_await ssl_socket.async_handshake(asio::ssl::stream_base::client, asio::use_awaitable);
+
+                std::string wire = req.serialize();
+                co_await asio::async_write(ssl_socket, asio::buffer(wire), asio::use_awaitable);
+
+                std::string response_buffer;
+                char buf[4096];
+                asio::error_code ec;
+
+                while (true) {
+                    std::size_t bytes = co_await ssl_socket.async_read_some(
+                        asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
+                    if (ec || bytes == 0) break;
+                    response_buffer.append(buf, bytes);
+                }
+
+                if (!res.parse(response_buffer)) {
+                    res.status(502).send("Bad Gateway: Invalid response format from upstream HTTPS server");
+                }
+
+                asio::error_code ignore_ec;
+                std::ignore = ssl_socket.async_shutdown(asio::redirect_error(asio::use_awaitable, ignore_ec));
+                ssl_socket.lowest_layer().close(ignore_ec);
+            } catch (const std::exception &ex) {
+                res.status(502).send(std::string("Bad Gateway: ") + ex.what());
+            }
+            co_return std::move(res);
+        }
+#else
+        if (parsed_url.scheme == "https") {
+            res.status(500).send("HTTPS request failed: WaveX was built without TLS support (WAVEX_HAS_SSL=0)");
+            co_return std::move(res);
+        }
+#endif
+
         asio::ip::tcp::socket socket(executor);
 
         try {
@@ -91,9 +145,6 @@ namespace wavex::client {
         std::ignore = socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
         std::ignore = socket.close(ignore_ec);
 
-        // Use std::move to invoke the move ctor (which preserves
-        // string_view validity via heap-pointer transfer) instead of
-        // the copy ctor (which would leave views dangling).
         co_return std::move(res);
     }
 

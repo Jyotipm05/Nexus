@@ -21,7 +21,8 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 - **🌐 Async Coroutine HTTP Client** — Modern, coroutine-native HTTP/1.1 client (`HttpClient`) for non-blocking outbound requests (`get`, `post`, `send`) with connection reuse and optional TLS 1.3 encryption *(HTTP/2 support to be released soon)*.
 - **📦 Chunked Transfer-Encoding** — Full streaming support for HTTP/1.1 chunked request and response encoding & decoding.
 - **🗂 MIME Type Detection Engine** — Fast, built-in file extension to MIME content-type resolver (`MimeTypes.hpp`) supporting over 50+ common web media types.
-- **🛠 Modern CLI Framework** — Built-in declarative CLI command engine (`wavex::cli::App`) with nested subcommands, typed flag parsing, required argument validation, and automatic help generation.
+- **🛠 Modern CLI Engine** — High-performance CLI argument parser (`wavex::cli::CliParser`) supporting flags (`--verbose`, `-v`), key-value options (`--host`, `-p`), positional arguments, typed getters (`get_int`, `get_bool`), and automatic `--help` generation.
+- **🔒 TLS 1.3 OpenSSL Encryption Engine** — Strict, native TLS 1.3 server encryption (`enable_tls()`, `wavex::server::TlsConfig`) supporting custom PEM certificate chains (`cert_file`), private key passphrases (`key_password`), DH parameters (`dh_file`), and strict legacy SSL/TLS protocol disabling (`force_tls13`).
 - **🧵 Tokio-Style Work-Stealing Dual-Queue Runtime** —
   - **`LocalQueue`**: Bounded 256-slot ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
   - **`InjectorQueue`**: Unbounded global MPMC queue with atomic size tracking for external tasks and overflow.
@@ -194,24 +195,69 @@ asio::awaitable<void> fetch_data(asio::io_context &ioc) {
 #include <iostream>
 
 int main(int argc, char* argv[]) {
-    wavex::cli::App app("wavex-tool", "WaveX CLI Utility", "1.0.0");
+    wavex::cli::CliParser parser("wavex-tool", "WaveX High-Performance HTTP Server Utility");
 
-    bool verbose = false;
-    std::string port = "8080";
+    parser.add_flag("verbose", 'v', "Enable verbose logging")
+          .add_option("host", 'h', "Host address to bind server", "127.0.0.1")
+          .add_option("port", 'p', "Server port to listen on", "8080");
 
-    app.add_flag("-v", "--verbose", "Enable verbose logging", verbose);
-    app.add_option("-p", "--port", "Server port", port);
+    auto result = parser.parse(argc, argv);
+    if (!result.ok()) {
+        if (result.help_requested) {
+            parser.print_help();
+            return 0;
+        }
+        std::cerr << "Error: " << result.error_message << "\n";
+        return 1;
+    }
 
-    auto* serve_cmd = app.add_subcommand("serve", "Start the HTTP server");
-    serve_cmd->callback([&]() {
-        std::cout << "Starting server on port " << port << " (verbose=" << verbose << ")\n";
-    });
+    std::string host = parser.get_string("host");
+    int port = parser.get_int("port", 8080);
+    bool verbose = parser.get_bool("verbose");
 
-    return app.run(argc, argv);
+    std::cout << "Starting server on http://" << host << ":" << port << " (verbose=" << verbose << ")\n";
+    return 0;
 }
 ```
 
-### 6. C++23 Modules Quick Start
+### 6. TLS 1.3 Server Encryption (`TlsConfig`)
+
+Enable strict TLS 1.3 HTTPS server encryption using `server.enable_tls()` with custom certificate/key paths or a `wavex::server::TlsConfig` struct:
+
+```cpp
+#include <wavex/wavex.hpp>
+#include <wavex/Server/TlsConfig.hpp>
+
+int main() {
+    auto &router = wavex::engine::HttpRouter::instance();
+
+    router.get("/secure", [](auto &, auto &res) -> asio::awaitable<void> {
+        res.status(200).json({{"encrypted", true}, {"protocol", "TLS 1.3"}});
+        co_return;
+    });
+
+    wavex::server::Http1Server server(router, "0.0.0.0", 8443);
+
+    // Option A: Enable TLS 1.3 directly with certificate & key paths
+    server.enable_tls("ssl/test.crt", "ssl/test.key");
+
+    // Option B: Advanced configuration via TlsConfig struct
+    /*
+    wavex::server::TlsConfig cfg;
+    cfg.cert_file = "ssl/cert.pem";
+    cfg.key_file = "ssl/key.pem";
+    cfg.key_password = "secret_passphrase";
+    cfg.dh_file = "ssl/dh2048.pem";
+    cfg.force_tls13 = true; // Exclusively enforce TLS 1.3
+    server.enable_tls(cfg);
+    */
+
+    server.run();
+    return 0;
+}
+```
+
+### 7. C++23 Modules Quick Start
 
 WaveX fully supports C++23 module imports for ultra-fast compilation:
 
@@ -267,7 +313,7 @@ graph LR
     end
 
     subgraph "CLI"
-        CLIApp["Cli::App<br/><small>subcommands & flags</small>"]
+        CLIApp["Cli::CliParser<br/><small>options, flags & positionals</small>"]
     end
 
     Req --> HReq
@@ -317,11 +363,12 @@ graph LR
 | `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
 | `Server/Server` | ✅ Complete | Coroutine TCP server with master acceptor & slave worker pool |
+| `Server/TlsConfig` | ✅ Complete | TLS 1.3 server encryption config (`cert_file`, `key_file`, `key_password`, `dh_file`, `force_tls13`) |
 | `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder & Chunked Transfer-Encoding |
 | `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request for server parsing & client builder |
 | `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket writing & client parsing |
 | `Client/HttpClient` | ✅ Complete | Async coroutine HTTP/1.1 client (`get`, `post`, `send`) — *HTTP/2 to be released soon* |
-| `Cli/Cli` | ✅ Complete | Type-safe CLI argument parser, flag validator, and subcommand engine |
+| `Cli/Cli` | ✅ Complete | Type-safe CLI argument parser (`wavex::cli::CliParser`), flag validator, and option engine |
 
 ---
 
