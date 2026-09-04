@@ -4,7 +4,6 @@
 #include <functional>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <vector>
 
 // 1. Concrete Chainable handler types
@@ -12,12 +11,11 @@ class PrefixHandler : public wavex::Chainable {
     std::string prefix_;
 
 public:
-    explicit PrefixHandler(std::string prefix) : prefix_(std::move(prefix)) {
-    }
+    explicit PrefixHandler(std::string prefix) : prefix_(std::move(prefix)) {}
 
-    [[nodiscard]] [[maybe_unused]] static std::string_view name_impl() { return "PrefixHandler"; }
+    [[nodiscard]] static std::string_view name_impl() { return "PrefixHandler"; }
 
-    [[nodiscard]] [[maybe_unused]] std::string handle_impl(const std::string &input) const {
+    [[nodiscard]] std::string handle_impl(const std::string &input) const {
         return prefix_ + input;
     }
 };
@@ -26,12 +24,11 @@ class SuffixHandler : public wavex::Chainable {
     std::string suffix_;
 
 public:
-    explicit SuffixHandler(std::string suffix) : suffix_(std::move(suffix)) {
-    }
+    explicit SuffixHandler(std::string suffix) : suffix_(std::move(suffix)) {}
 
-    [[nodiscard]] [[maybe_unused]] static std::string_view name_impl() { return "SuffixHandler"; }
+    [[nodiscard]] static std::string_view name_impl() { return "SuffixHandler"; }
 
-    [[nodiscard]] [[maybe_unused]] std::string handle_impl(const std::string &input) const {
+    [[nodiscard]] std::string handle_impl(const std::string &input) const {
         return input + suffix_;
     }
 };
@@ -39,9 +36,9 @@ public:
 // 2. Mutable and Rvalue handler
 class UppercaseHandler : public wavex::Chainable {
 public:
-    [[nodiscard]] [[maybe_unused]] static std::string_view name_impl() { return "UppercaseHandler"; }
+    [[nodiscard]] static std::string_view name_impl() { return "UppercaseHandler"; }
 
-    [[maybe_unused]] static std::string handle_impl(std::string &&input) {
+    static std::string handle_impl(std::string &&input) {
         for (char &c: input) {
             c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         }
@@ -49,42 +46,15 @@ public:
     }
 };
 
-// 3. Static compile-time pipeline
-template<typename... Handlers>
-class StaticChain {
-    std::tuple<Handlers...> handlers_;
-
-    // Transparent unwrap: plain handlers pass straight through,
-    // reference_wrapper<T> unwraps to T& so .handle() resolves on T.
-    template<typename T>
-    static T &unwrap(T &t) { return t; }
-
-    template<typename T>
-    static T &unwrap(std::reference_wrapper<T> rw) { return rw.get(); }
-
-public:
-    constexpr explicit StaticChain(Handlers... handlers)
-        : handlers_(std::move(handlers)...) {
-    }
-
-    template<typename Context>
-    bool process_all(Context &ctx) {
-        return std::apply([&ctx](auto &... h) {
-            return (unwrap(h).handle(ctx) && ...);
-        }, handlers_);
-    }
-};
-
 // Pipeline element for boolean chain
 struct AuthGuard : public wavex::Chainable {
     bool allow = true;
 
-    explicit AuthGuard(const bool a = true) : allow(a) {
-    }
+    explicit AuthGuard(const bool a = true) : allow(a) {}
 
-    [[nodiscard]] [[maybe_unused]] static std::string_view name_impl() { return "AuthGuard"; }
+    [[nodiscard]] static std::string_view name_impl() { return "AuthGuard"; }
 
-    [[nodiscard]] [[maybe_unused]] bool handle_impl(const std::string &user) const {
+    [[nodiscard]] bool handle_impl(const std::string &user) const {
         std::cout << "  -> AuthGuard executing for user: '" << user << "'\n";
         const bool result = (allow && user == "admin");
         std::cout << "  <- AuthGuard returning: " << (result ? "true (allow next)" : "false (short-circuit)") << "\n";
@@ -97,9 +67,9 @@ struct AuditLogger : public wavex::Chainable {
 
     AuditLogger() = default;
 
-    [[maybe_unused]] static std::string_view name_impl() { return "AuditLogger"; }
+    static std::string_view name_impl() { return "AuditLogger"; }
 
-    [[maybe_unused]] bool handle_impl(const std::string &user) const {
+    bool handle_impl(const std::string &user) const {
         std::cout << "  -> AuditLogger executing for user: '" << user << "'\n";
         audit_log.push_back(user);
         std::cout << "  <- AuditLogger returning: true (allow next)\n";
@@ -134,12 +104,10 @@ int main() {
     static_assert(wavex::ChainableHandler<SuffixHandler, const std::string &>);
     static_assert(wavex::ChainableHandler<UppercaseHandler, std::string &&>);
 
-    // Test 4: Static Pipeline execution with fold expression
-    // Use std::ref so the pipeline holds references to auth/audit rather than
-    // copies — mutations (audit_log.push_back) are visible on the originals.
+    // Test 4: Static Pipeline execution with wavex::StaticChain & make_chain
     AuthGuard auth{true};
     AuditLogger audit{};
-    StaticChain pipeline{std::ref(auth), std::ref(audit)};
+    auto pipeline = wavex::make_chain(std::ref(auth), std::ref(audit));
 
     std::string user_admin = "admin";
     std::cout << "\n[Test 4.1] Calling process_all for user '" << user_admin << "'...\n";
@@ -156,6 +124,23 @@ int main() {
     assert(ok_guest == false);
     // Short-circuited by AuthGuard, AuditLogger must NOT have run for "guest"
     assert(audit.audit_log.size() == 1);
+
+    // Test 5: ConditionalChainable (semi-static runtime toggling)
+    std::cout << "\n[Test 5] Testing ConditionalChainable runtime enable/disable...\n";
+    wavex::ConditionalChainable cond_auth(AuthGuard{false}, false); // Disabled AuthGuard
+    auto cond_pipeline = wavex::make_chain(std::ref(cond_auth), std::ref(audit));
+
+    // Even though AuthGuard has allow=false, it is disabled via cond_auth so it bypasses and allows next
+    bool ok_disabled_auth = cond_pipeline.process_all("guest");
+    assert(ok_disabled_auth == true);
+    assert(audit.audit_log.size() == 2);
+    assert(audit.audit_log[1] == "guest");
+
+    // Enable cond_auth dynamically
+    cond_auth.set_enabled(true);
+    bool ok_enabled_auth = cond_pipeline.process_all("guest");
+    assert(ok_enabled_auth == false); // Now AuthGuard runs and short-circuits!
+    assert(audit.audit_log.size() == 2);
 
     std::cout << "[Test] Chainable deducing this tests PASSED successfully!\n";
     return 0;

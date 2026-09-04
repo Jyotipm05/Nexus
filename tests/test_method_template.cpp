@@ -114,6 +114,11 @@ void test_static_routes() {
         co_return;
     });
 
+    router.query("/api/v1/resource", [](HttpRequest &, HttpResponse &res) -> asio::awaitable<void> {
+        res.status(200).send("QUERY_RESOURCE_BODY");
+        co_return;
+    });
+
     // Register distinct handlers for DIFFERENT PATHS under the same prefix
     router.get("/api/v1/health", [](HttpRequest &, HttpResponse &res) -> asio::awaitable<void> {
         res.status(200).send("HEALTH_OK_BODY");
@@ -158,6 +163,13 @@ void test_static_routes() {
     if (match_patch) {
         check(execute_handler(match_patch->handler) == "PATCH_RESOURCE_BODY", "PATCH handler returns distinct body 'PATCH_RESOURCE_BODY'");
     }
+
+    auto match_query = router.resolve(HTTP_Method::QUERY, "/api/v1/resource");
+    check(match_query.has_value(), "QUERY /api/v1/resource resolves successfully");
+    if (match_query) {
+        check(execute_handler(match_query->handler) == "QUERY_RESOURCE_BODY", "QUERY handler returns distinct body 'QUERY_RESOURCE_BODY'");
+    }
+
 
     // 2. Verify path separation on the same method (GET)
     auto match_health = router.resolve(HTTP_Method::GET, "/api/v1/health");

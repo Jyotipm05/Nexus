@@ -1,14 +1,15 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * @file HttpRouter.hpp
- * @brief HTTP-specific router with get/post/put/del convenience methods.
+ * @brief HTTP-specific router with GET/POST/PUT/DEL convenience methods.
  *
- * Derives from Router<HttpProto> to add HTTP method shortcuts while
- * keeping the base router protocol-agnostic.
+ * Derives from Router<HttpProto> to add HTTP method shortcuts and static chain integration
+ * while keeping the base router protocol-agnostic.
  */
 
 #pragma once
@@ -24,6 +25,7 @@ namespace wavex::engine {
     /**
      * @struct HttpProto
      * @brief Protocol adapter for HTTP — provides the method, request, and response types for a specific Codec.
+     * @tparam Codec HTTP protocol codec type (defaults to http1codec).
      */
     template <typename Codec = protos::http::http1codec>
     struct HttpProto {
@@ -39,6 +41,7 @@ namespace wavex::engine {
     /**
      * @class HttpRouter
      * @brief HTTP-specific convenience wrapper around Router<HttpProto<Codec>>.
+     * @tparam Codec HTTP protocol codec type (defaults to http1codec).
      */
     template <typename Codec = protos::http::http1codec>
     class HttpRouter : public Router<HttpProto<Codec>> {
@@ -50,7 +53,10 @@ namespace wavex::engine {
         using Base::use;
         using Base::resolve;
 
-        /// Singleton instance getter for HttpRouter.
+        /**
+         * @brief Singleton instance getter for HttpRouter.
+         * @return Reference to the process-wide HttpRouter instance.
+         */
         static HttpRouter &instance() {
             static HttpRouter s_instance;
             return s_instance;
@@ -60,34 +66,74 @@ namespace wavex::engine {
         //  Simple registration (method + pattern + handler)
         // ---------------------------------------------------------------
 
+        /**
+         * @brief Registers a GET handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void get(const std::string_view pattern, Handler h) {
             route(protos::http::method::GET, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers a POST handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void post(const std::string_view pattern, Handler h) {
             route(protos::http::method::POST, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers a PUT handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void put(const std::string_view pattern, Handler h) {
             route(protos::http::method::PUT, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers a DELETE handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void del(const std::string_view pattern, Handler h) {
             route(protos::http::method::DELETE, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers a HEAD handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void head(const std::string_view pattern, Handler h) {
             route(protos::http::method::HEAD, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers an OPTIONS handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void options(const std::string_view pattern, Handler h) {
             route(protos::http::method::OPTIONS, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers a PATCH handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void patch(const std::string_view pattern, Handler h) {
             route(protos::http::method::PATCH, pattern, std::move(h));
         }
 
+        /**
+         * @brief Registers a QUERY handler for a given route pattern.
+         * @param pattern Route pattern.
+         * @param h Coroutine handler.
+         */
         void query(const std::string_view pattern, Handler h) {
             route(protos::http::method::QUERY, pattern, std::move(h));
         }
@@ -96,36 +142,176 @@ namespace wavex::engine {
         //  Registration with per-route middlewares
         // ---------------------------------------------------------------
 
+        /**
+         * @brief Registers a GET handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void get(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::GET, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers a POST handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void post(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::POST, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers a PUT handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void put(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::PUT, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers a DELETE handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void del(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::DELETE, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers a HEAD handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void head(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::HEAD, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers an OPTIONS handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void options(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::OPTIONS, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers a PATCH handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void patch(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::PATCH, pattern, std::move(mws), std::move(h));
         }
 
+        /**
+         * @brief Registers a QUERY handler with per-route middlewares.
+         * @param pattern Route pattern.
+         * @param mws Vector of per-route middleware functions.
+         * @param h Coroutine handler.
+         */
         void query(const std::string_view pattern, std::vector<MiddlewareFn> mws, Handler h) {
             route(protos::http::method::QUERY, pattern, std::move(mws), std::move(h));
+        }
+
+        // ---------------------------------------------------------------
+        //  Registration with StaticChain
+        // ---------------------------------------------------------------
+
+        /**
+         * @brief Registers a GET route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void get(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::GET, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers a POST route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void post(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::POST, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers a PUT route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void put(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::PUT, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers a DELETE route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void del(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::DELETE, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers a HEAD route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void head(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::HEAD, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers an OPTIONS route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void options(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::OPTIONS, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers a PATCH route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void patch(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::PATCH, pattern, std::move(chain));
+        }
+
+        /**
+         * @brief Registers a QUERY route using a StaticChain pipeline.
+         * @tparam Handlers Types of handlers in the static chain.
+         * @param pattern Route pattern.
+         * @param chain StaticChain instance.
+         */
+        template <typename... Handlers>
+        void query(const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(protos::http::method::QUERY, pattern, std::move(chain));
         }
     };
 

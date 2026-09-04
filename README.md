@@ -14,10 +14,11 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 ## Features
 
 - **⚡ Coroutine-Native Engine** — Async server handlers and client requests written with Asio C++23 coroutines (`co_await`, `asio::awaitable<void>`), zero callback boilerplate.
+- **⚡ C++23 "Deducing This" Static Pipelines** — Zero-overhead static dispatch mixin (`wavex::Chainable`) enabling compile-time tuple pipelines (`wavex::StaticChain`), `make_chain` factory, and semi-static runtime toggles (`ConditionalChainable`), eliminating vtable and dynamic `std::function` heap allocation overhead.
 - **⚡ CRTP Zero-VTable Architecture** — Static compile-time polymorphism (`Request<Derived>`, `Response<Derived>`) eliminating virtual function pointers (`vptr`), saving memory and enabling zero-overhead direct dispatch.
 - **🚀 Express.js-Style Linear Pipeline** — Iterative, non-recursive `run_chain()` middleware runner with immediate response dispatch (`res.send()` / `res.json()`) and zero-allocation socket pointer dispatch (`HttpResponse res(&socket)`).
-- **🌳 Hybrid Radix-Tree Router** — High-performance radix-tree supporting static segments, dynamic parameters (`:id`), `{id:[0-9]+}` RE2 regex constraints, and catch-all wildcards (`*filepath`).
-- **🌐 Async Coroutine HTTP Client** — Modern, coroutine-native HTTP/HTTPS client (`HttpClient`) for non-blocking outbound requests (`get`, `post`, `send`) with connection reuse and optional TLS 1.3 encryption.
+- **🌳 Hybrid Radix-Tree Router** — High-performance radix-tree supporting static segments, dynamic parameters (`:id`), `{id:[0-9]+}` RE2 regex constraints, catch-all wildcards (`*filepath`), and RFC 9110 HTTP methods including `QUERY`.
+- **🌐 Async Coroutine HTTP Client** — Modern, coroutine-native HTTP/1.1 client (`HttpClient`) for non-blocking outbound requests (`get`, `post`, `send`) with connection reuse and optional TLS 1.3 encryption *(HTTP/2 support to be released soon)*.
 - **📦 Chunked Transfer-Encoding** — Full streaming support for HTTP/1.1 chunked request and response encoding & decoding.
 - **🗂 MIME Type Detection Engine** — Fast, built-in file extension to MIME content-type resolver (`MimeTypes.hpp`) supporting over 50+ common web media types.
 - **🛠 Modern CLI Framework** — Built-in declarative CLI command engine (`wavex::cli::App`) with nested subcommands, typed flag parsing, required argument validation, and automatic help generation.
@@ -86,7 +87,7 @@ int main() {
 }
 ```
 
-### 2. Modern Logging with Source Location & Colors
+### 2. Modern Logging with Source Location & ANSI Colors
 
 Zero-macro, high-performance logging with automatic `std::source_location` call-site capture and ANSI terminal colors:
 
@@ -96,6 +97,9 @@ Zero-macro, high-performance logging with automatic `std::source_location` call-
 int main() {
     // Configure minimum log level (TRACE, DEBUG, INFO, WARN, ERROR, FATAL)
     wavex::base::Logger::instance().set_level(wavex::base::LogLevel::DEBUG);
+
+    // Enable or disable ANSI terminal colors (enabled by default)
+    wavex::base::Logger::instance().set_colored(true);
 
     // Modern functional logging API
     wavex::log::trace("Buffer allocated: {} bytes", 1024);
@@ -113,45 +117,54 @@ int main() {
 
 ### 3. C++23 "Deducing This" Static Pipelines (`class Chainable`)
 
-Build compile-time static dispatch pipelines without vtables or heap allocations:
+Build compile-time static dispatch pipelines without vtables or dynamic heap allocations using `StaticChain` and `make_chain`:
 
 ```cpp
 #include <wavex/Base/Chainable.hpp>
-#include <wavex/Base/Logger.hpp>
-#include <tuple>
+#include <wavex/Engine/HttpRouter.hpp>
+#include <iostream>
 
-// 1. Concrete Handler inheriting from class Chainable
-class TokenValidator : public wavex::Chainable {
-public:
-    std::string_view name_impl() const { return "TokenValidator"; }
-
-    template <typename Context>
-    bool handle_impl(Context& ctx) const {
-        if (ctx.token != "valid-token") {
-            wavex::log::warn("[{}] Rejected unauthorized token", name());
-            return false;
+// 1. Define Chainable Middlewares using C++23 "Deducing This"
+struct AuthGuard : public wavex::Chainable {
+    template <typename Self, typename Req, typename Res>
+    asio::awaitable<bool> handle_impl(this Self&& self, Req& req, Res& res) {
+        if (req.header("Authorization") != "Bearer valid_token") {
+            res.status(401).send("Unauthorized");
+            co_return false; // Short-circuits remaining pipeline statically!
         }
-        return true;
+        co_return true; // Proceed to next handler
     }
 };
 
-// 2. Static Pipeline executing via fold expressions
-template <typename... Handlers>
-class StaticChain {
-    std::tuple<Handlers...> handlers_;
-public:
-    constexpr explicit StaticChain(Handlers... h) : handlers_(std::move(h)...) {}
-
-    template <typename Context>
-    bool process(Context& ctx) {
-        return std::apply([&ctx](auto&... handler) {
-            return (handler.handle(ctx) && ...); // Direct non-virtual inlined dispatch
-        }, handlers_);
+struct AuditLogger : public wavex::Chainable {
+    template <typename Self, typename Req, typename Res>
+    asio::awaitable<bool> handle_impl(this Self&& self, Req& req, Res& res) {
+        std::cout << "[AuditLog] Request path: " << req.path() << "\n";
+        co_return true;
     }
 };
+
+struct TargetHandler : public wavex::Chainable {
+    template <typename Self, typename Req, typename Res>
+    asio::awaitable<bool> handle_impl(this Self&& self, Req& req, Res& res) {
+        res.status(200).send("Static Chain Success!");
+        co_return true;
+    }
+};
+
+// 2. Register Static Chain directly in HttpRouter
+int main() {
+    auto &router = wavex::engine::HttpRouter::instance();
+
+    // Fuses Auth -> Audit -> Handler into 1 statically dispatched, inlined pipeline!
+    router.get("/api/static-fast", wavex::make_chain(AuthGuard{}, AuditLogger{}, TargetHandler{}));
+}
 ```
 
 ### 4. Async HTTP Client
+
+> [!NOTE]
+> `HttpClient` currently supports **HTTP/1.1** (with TLS 1.3). **HTTP/2** support is planned for release soon.
 
 ```cpp
 #include <iostream>
@@ -163,7 +176,7 @@ using namespace wavex::client;
 asio::awaitable<void> fetch_data(asio::io_context &ioc) {
     HttpClient client(ioc);
     
-    // GET request
+    // GET request (HTTP/1.1)
     auto response = co_await client.get("http://httpbin.org/get");
     std::cout << "Status: " << response.status_code() << "\n";
     std::cout << "Body: " << response.body() << "\n";
@@ -222,6 +235,7 @@ graph LR
         Logger["Logger<br/><small>TRACE..FATAL</small>"]
         Uri["Uri / Url<br/><small>RFC 3986</small>"]
         Mime["MimeTypes<br/><small>file ext -> Content-Type</small>"]
+        Chainable["Chainable / StaticChain<br/><small>C++23 static dispatch</small>"]
         Req["Request<br/><small>abstract</small>"]
         Res["Response<br/><small>fluent API</small>"]
         MW["Middleware<br/><small>linear chain + next()</small>"]
@@ -229,7 +243,7 @@ graph LR
 
     subgraph "Engine"
         Router["Router&lt;Proto&gt;<br/><small>radix tree + RE2</small>"]
-        HttpRouter["HttpRouter<br/><small>get/post/put/del</small>"]
+        HttpRouter["HttpRouter<br/><small>get/post/put/del/query</small>"]
         Router --> HttpRouter
     end
 
@@ -258,6 +272,7 @@ graph LR
 
     Req --> HReq
     Res --> HRes
+    Chainable --> HttpRouter
     HttpRouter --> Server
     MW --> Server
     Codec --> Server
@@ -266,6 +281,7 @@ graph LR
     style Logger fill:#2d6a4f,color:#fff
     style Uri fill:#2d6a4f,color:#fff
     style Mime fill:#2d6a4f,color:#fff
+    style Chainable fill:#2d6a4f,color:#fff
     style Req fill:#2d6a4f,color:#fff
     style Res fill:#2d6a4f,color:#fff
     style MW fill:#2d6a4f,color:#fff
@@ -291,11 +307,12 @@ graph LR
 | `Base/Logger` | ✅ Complete | Levelled logger (TRACE, DEBUG, INFO, WARN, ERROR, FATAL) |
 | `Base/Uri` / `Base/Url` | ✅ Complete | RFC 3986 URI encode/decode & URL query string parser |
 | `Base/MimeTypes` | ✅ Complete | Fast file extension to MIME type mappings (`mime_type_from_ext`) |
+| `Base/Chainable` | ✅ Complete | C++23 "Deducing `this`" static pipeline dispatch (`StaticChain`, `make_chain`, `ConditionalChainable`) |
 | `Base/Request` | ✅ Complete | Protocol-agnostic CRTP request base (`Request<Derived>`, zero-vtable) |
 | `Base/Response` | ✅ Complete | Protocol-agnostic CRTP response builder (`Response<Derived>`, zero-vtable, fluent API) |
 | `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`) & linear pipeline |
 | `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex & wildcard (`*filepath`) matching |
-| `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, etc.) |
+| `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, `query`, etc.) |
 | `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot ring buffer for ultra-fast task stealing |
 | `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
@@ -303,7 +320,7 @@ graph LR
 | `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder & Chunked Transfer-Encoding |
 | `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request for server parsing & client builder |
 | `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket writing & client parsing |
-| `Client/HttpClient` | ✅ Complete | Async coroutine HTTP/HTTPS client for calling 3rd-party services (`get`, `post`, `send`) |
+| `Client/HttpClient` | ✅ Complete | Async coroutine HTTP/1.1 client (`get`, `post`, `send`) — *HTTP/2 to be released soon* |
 | `Cli/Cli` | ✅ Complete | Type-safe CLI argument parser, flag validator, and subcommand engine |
 
 ---
@@ -359,6 +376,7 @@ Then send HTTP requests in Postman to `http://127.0.0.1:8080` (see endpoint refe
 include/wavex/
 ├── wavex.hpp                ← Main framework entry header
 ├── Base/
+│   ├── Chainable.hpp        ← C++23 Deducing-this static dispatch & StaticChain
 │   ├── Logger.hpp           ← Levelled logger
 │   ├── Request.hpp          ← Abstract request base
 │   ├── Response.hpp         ← Abstract response + fluent API
@@ -368,7 +386,7 @@ include/wavex/
 │   └── Url.hpp              ← URL & query string parser
 ├── Engine/
 │   ├── Router.hpp           ← Protocol-agnostic radix tree + RE2
-│   └── HttpRouter.hpp       ← HTTP route shortcuts
+│   └── HttpRouter.hpp       ← HTTP route shortcuts (get, post, put, del, query)
 ├── Server/
 │   ├── WorkStealingQueue.hpp← LocalQueue (lock-free ring) & InjectorQueue (global MPMC)
 │   ├── ThreadPool.hpp       ← Tokio-style adaptive worker pool
@@ -379,7 +397,7 @@ include/wavex/
 │   └── Cli.hpp              ← Subcommand and CLI option parser
 └── protos/
     └── http/
-        ├── Methods.hpp      ← HTTP method enum
+        ├── Methods.hpp      ← HTTP method enum (GET, POST, PUT, DELETE, QUERY, etc.)
         ├── http1codec.hpp   ← Zero-copy HTTP/1.x parser + chunked encoder/decoder
         ├── HttpRequest.hpp  ← Concrete HTTP request
         └── HttpResponse.hpp ← Concrete HTTP response

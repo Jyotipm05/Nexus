@@ -1,8 +1,9 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * @file Router.hpp
  * @brief Protocol-agnostic hybrid radix-tree router with RE2 regex constraints.
@@ -51,6 +52,7 @@
 #include <wavex/Base/Request.hpp>
 #include <wavex/Base/Response.hpp>
 #include <wavex/Base/MiddleWare.hpp>
+#include <wavex/Base/Chainable.hpp>
 #include <asio/awaitable.hpp>
 
 namespace wavex::engine {
@@ -167,6 +169,16 @@ namespace wavex::engine {
             }
         }
 
+        /**
+         * @brief Registers a route using a StaticChain.
+         */
+        template <typename... Handlers>
+        void route(MethodType m, const std::string_view pattern, StaticChain<Handlers...> chain) {
+            route(m, pattern, [c = std::move(chain)](RequestType &req, ResponseType &res) mutable -> asio::awaitable<void> {
+                co_await c.process_all_async(req, res);
+            });
+        }
+
         // ---------------------------------------------------------------
         //  Middleware registration
         // ---------------------------------------------------------------
@@ -192,6 +204,32 @@ namespace wavex::engine {
             } else [[likely]] {
                 middlewares_.emplace_back(normalize_path(prefix), std::move(mw));
             }
+        }
+
+        /**
+         * @brief Registers a global static middleware chain.
+         */
+        template <typename... Handlers>
+        void use(StaticChain<Handlers...> chain) {
+            use([c = std::move(chain)](RequestType &req, ResponseType &res, base::Next next) mutable -> asio::awaitable<void> {
+                bool ok = co_await c.process_all_async(req, res);
+                if (ok) {
+                    co_await next();
+                }
+            });
+        }
+
+        /**
+         * @brief Registers a scoped static middleware chain.
+         */
+        template <typename... Handlers>
+        void use(const std::string_view prefix, StaticChain<Handlers...> chain) {
+            use(prefix, [c = std::move(chain)](RequestType &req, ResponseType &res, base::Next next) mutable -> asio::awaitable<void> {
+                bool ok = co_await c.process_all_async(req, res);
+                if (ok) {
+                    co_await next();
+                }
+            });
         }
 
         // ---------------------------------------------------------------
@@ -419,8 +457,7 @@ namespace wavex::engine {
                     auto pname = std::string(inner.substr(0, colon));
                     auto pat = std::string(inner.substr(colon + 1));
                     for (const auto &child: parent->param_children) {
-                        if (child->is_param && child->constraint && child->param_name == pname && child->pattern ==
-                            pat) {
+                        if (child->is_param && child->constraint && child->param_name == pname && child->pattern == pat) {
                             return child.get();
                         }
                     }

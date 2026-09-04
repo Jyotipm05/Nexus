@@ -21,4 +21,8 @@ export module wavex:chainable;
 export namespace wavex {
     using wavex::Chainable;
     using wavex::ChainableHandler;
+    using wavex::StaticChain;
+    using wavex::make_chain;
+    using wavex::ConditionalChainable;
 }
+
