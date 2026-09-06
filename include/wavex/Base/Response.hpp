@@ -44,10 +44,43 @@ namespace wavex::base {
             return std::forward<Self>(self);
         }
 
-        /// Set a response header (appends; does not deduplicate)
+        /// Set a response header (updates if exists, otherwise appends)
         template <typename Self>
         decltype(auto) set(this Self&& self, const std::string_view name, const std::string_view value) {
+            for (auto &[k, v]: self.headers_) {
+                if (k.size() == name.size()) {
+                    bool match = true;
+                    for (size_t i = 0; i < k.size(); ++i) {
+                        if (std::tolower(static_cast<unsigned char>(k[i])) !=
+                            std::tolower(static_cast<unsigned char>(name[i]))) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) {
+                        v = std::string(value);
+                        return std::forward<Self>(self);
+                    }
+                }
+            }
             self.headers_.emplace_back(std::string(name), std::string(value));
+            return std::forward<Self>(self);
+        }
+
+        /// Remove a header by name (case-insensitive)
+        template <typename Self>
+        decltype(auto) remove_header(this Self&& self, const std::string_view name) {
+            std::erase_if(self.headers_, [&](const auto &pair) {
+                const auto &k = pair.first;
+                if (k.size() != name.size()) return false;
+                for (size_t i = 0; i < k.size(); ++i) {
+                    if (std::tolower(static_cast<unsigned char>(k[i])) !=
+                        std::tolower(static_cast<unsigned char>(name[i]))) {
+                        return false;
+                    }
+                }
+                return true;
+            });
             return std::forward<Self>(self);
         }
 

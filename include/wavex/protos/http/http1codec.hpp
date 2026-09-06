@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -285,7 +285,7 @@ namespace wavex::protos::http {
                 return r;
 
             // ── Body ─────────────────────────────────────────────────────────────
-            return extract_body(buffer, cursor, req, bytes_consumed);
+            return extract_body(buffer, cursor, req, bytes_consumed, /*is_request=*/true);
         }
 
         /**
@@ -386,7 +386,8 @@ namespace wavex::protos::http {
         static result extract_body(const std::string_view buffer,
                                    const std::size_t cursor,
                                    message_base &msg,
-                                   std::size_t &bytes_consumed) {
+                                   std::size_t &bytes_consumed,
+                                   const bool is_request = false) {
             // Single pass: find both interesting headers at once
             std::optional<std::string_view> te, cl;
             for (const auto &[n, v]: msg.headers) {
@@ -404,11 +405,18 @@ namespace wavex::protos::http {
                 const auto [ptr, ec] = std::from_chars(
                     cl->data(), cl->data() + cl->size(), content_length);
                 if (ec != std::errc{}) return result::error;
+            } else if (is_request) {
+                // RFC 7230 §3.3.3: In a request message without Transfer-Encoding
+                // or Content-Length, message body length is zero.
+                content_length = 0;
             } else {
                 content_length = buffer.size() - cursor;
             }
 
             if (buffer.size() - cursor < content_length) {
+                if (is_request) {
+                    return result::incomplete;
+                }
                 msg.body = buffer.substr(cursor);
                 bytes_consumed = buffer.size();
                 return result::success;

@@ -56,12 +56,48 @@ namespace wavex::protos::http {
 
         /// Parse the owned buffer (server side). Returns true on success.
         bool parse() {
-            size_t consumed = 0;
-            if (const auto result = parser_type::parse_request(buffer_, parsed_, consumed);
+            consumed_ = 0;
+            if (const auto result = parser_type::parse_request(buffer_, parsed_, consumed_);
                 result != parser_type::result::success)
                 return false;
 
             extract_path_query(parsed_.target);
+            return true;
+        }
+
+        /**
+         * @brief Parse directly from an external stream buffer view without copying.
+         * @param stream_buf Stream buffer view containing wire data.
+         * @return parser_type::result (success, incomplete, error).
+         */
+        typename parser_type::result parse_stream(const std::string_view stream_buf) {
+            consumed_ = 0;
+            const auto result = parser_type::parse_request(stream_buf, parsed_, consumed_);
+            if (result == parser_type::result::success) {
+                extract_path_query(parsed_.target);
+            }
+            return result;
+        }
+
+        /// Returns number of bytes consumed by the parser for this request
+        [[nodiscard]] size_t consumed_bytes() const noexcept { return consumed_; }
+
+        /// Checks if this HTTP request indicates the connection should stay active (Keep-Alive)
+        [[nodiscard]] bool should_keep_alive() const noexcept {
+            const auto conn = parsed_.get_header("Connection");
+            if (parsed_.version_major == 1 && parsed_.version_minor == 1) {
+                // In HTTP/1.1, connections are persistent by default unless "close" is specified.
+                if (conn && detail::is_equal(*conn, "close")) {
+                    return false;
+                }
+                return true;
+            } else if (parsed_.version_major == 1 && parsed_.version_minor == 0) {
+                // In HTTP/1.0, connections close by default unless "keep-alive" is specified.
+                if (conn && detail::is_equal(*conn, "keep-alive")) {
+                    return true;
+                }
+                return false;
+            }
             return true;
         }
 
@@ -156,6 +192,7 @@ namespace wavex::protos::http {
         }
 
         std::string buffer_;              ///< owned receive buffer (server)
+        size_t consumed_{0};              ///< byte count consumed by parser
         request_type parsed_;             ///< zero-copy views
         std::string path_;               ///< extracted path
         std::string raw_target_owned_;   ///< owned full target string (client)

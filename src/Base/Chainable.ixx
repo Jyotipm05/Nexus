@@ -24,5 +24,6 @@ export namespace wavex {
     using wavex::StaticChain;
     using wavex::make_chain;
     using wavex::ConditionalChainable;
+    using wavex::KeepAlivePolicy;
 }
 

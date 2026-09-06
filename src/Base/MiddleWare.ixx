@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -21,10 +21,12 @@ module;
 // to the module body below.
 #define ASIO_HAS_CO_AWAIT 1
 #include <functional>
+#include <string>
 #include <asio/awaitable.hpp>
 #include <wavex/Base/MimeTypes.hpp>
 #include <wavex/Base/Request.hpp>
 #include <wavex/Base/Response.hpp>
+#include <wavex/Base/MiddleWare.hpp>
 
 export module wavex:middleware;
 
@@ -42,4 +44,7 @@ export namespace wavex::base {
      */
     template <typename ReqT, typename ResT>
     using GenericMiddlewareFn = std::function<asio::awaitable<void>(ReqT &, ResT &, Next)>;
+
+    using wavex::base::keep_alive;
+    using wavex::base::sse_stay_active;
 } // export namespace wavex::base

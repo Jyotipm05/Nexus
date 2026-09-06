@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Jyotipriya Mondal
+// Copyright (c) 2026 Jyotipriya Mondal
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -16,4 +16,6 @@ export module wavex:client;
 
 export namespace wavex::client {
     using wavex::client::HttpClient;
+    using wavex::protos::http::method;
+    using enum wavex::protos::http::method;
 }

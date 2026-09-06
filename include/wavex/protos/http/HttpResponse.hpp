@@ -230,6 +230,32 @@ namespace wavex::protos::http {
         [[nodiscard]] std::string_view raw_response() const { return buffer_owner_; }
 
         /**
+         * @brief Configure HTTP Keep-Alive persistent connection headers on this response.
+         * @param enable True to request keep-alive, false to request connection closure.
+         * @param timeout_sec Idle timeout in seconds (default: 5).
+         * @param max_requests Remaining maximum requests on this connection (default: 1000).
+         */
+        HttpResponse &set_keep_alive(bool enable, unsigned timeout_sec = 5, unsigned max_requests = 1000) {
+            if (enable) {
+                set("Connection", "keep-alive");
+                set("Keep-Alive", "timeout=" + std::to_string(timeout_sec) + ", max=" + std::to_string(max_requests));
+            } else {
+                set("Connection", "close");
+                remove_header("Keep-Alive");
+            }
+            return *this;
+        }
+
+        /// Checks if this HTTP response allows the connection to stay active
+        [[nodiscard]] bool should_keep_alive() const noexcept {
+            const auto conn = header("Connection");
+            if (conn && detail::is_equal(*conn, "close")) {
+                return false;
+            }
+            return true;
+        }
+
+        /**
          * @brief Starts chunked response streaming over the bound socket.
          * Transmits HTTP status line and Transfer-Encoding: chunked headers immediately.
          */

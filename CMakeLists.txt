@@ -362,6 +362,7 @@ if (WAVEX_TEST)
     wavex_add_test(wavex_cli_tests             tests/test_cli.cpp)
     wavex_add_test(wavex_chainable_tests       tests/test_chainable.cpp)
     wavex_add_test(wavex_logger_tests          tests/test_logger_modern.cpp)
+    wavex_add_test(wavex_server_keepalive_tests tests/test_server_keepalive.cpp)
 
     # Interactive dev/Postman manual testing server (not a CTest target)
     add_executable(wavex_postman_server tests/postman_demo_server.cpp)

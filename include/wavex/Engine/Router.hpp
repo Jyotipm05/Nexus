@@ -102,6 +102,11 @@ namespace wavex::engine {
             root_->prefix = "/";
         }
 
+        Router(const Router &) = delete;
+        Router &operator=(const Router &) = delete;
+        Router(Router &&) noexcept = default;
+        Router &operator=(Router &&) noexcept = default;
+
         /**
          * @brief Singleton instance for a given protocol type.
          * @return Reference to the process-wide Router<Proto> instance, guaranteed
@@ -111,6 +116,14 @@ namespace wavex::engine {
         static Router &instance() {
             static Router s_instance;
             return s_instance;
+        }
+
+        /**
+         * @brief Creates a distinct, local Router instance.
+         * @return A new local Router instance independent of the process-wide singleton.
+         */
+        static Router make_instance() {
+            return Router{};
         }
 
         /**

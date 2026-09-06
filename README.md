@@ -23,13 +23,14 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 - **🗂 MIME Type Detection Engine** — Fast, built-in file extension to MIME content-type resolver (`MimeTypes.hpp`) supporting over 50+ common web media types.
 - **🛠 Modern CLI Engine** — High-performance CLI argument parser (`wavex::cli::CliParser`) supporting flags (`--verbose`, `-v`), key-value options (`--host`, `-p`), positional arguments, typed getters (`get_int`, `get_bool`), and automatic `--help` generation.
 - **🔒 TLS 1.3 OpenSSL Encryption Engine** — Strict, native TLS 1.3 server encryption (`enable_tls()`, `wavex::server::TlsConfig`) supporting custom PEM certificate chains (`cert_file`), private key passphrases (`key_password`), DH parameters (`dh_file`), and strict legacy SSL/TLS protocol disabling (`force_tls13`).
+- **🔄 HTTP Stay-Active & Inactivity Timeout (RFC 7230 / RFC 9112)** — Full persistent connection support over Plain TCP and TLS 1.3 streams. Handles HTTP pipelining without socket re-establishment, manages inactivity timeouts (`set_keep_alive_timeout`) via Asio steady timers, enforces maximum request thresholds (`set_max_keep_alive_requests`), and includes zero-cost compile-time policies (`KeepAlivePolicy`) and middlewares (`keep_alive`, `sse_stay_active`).
 - **🧵 Tokio-Style Work-Stealing Dual-Queue Runtime** —
   - **`LocalQueue`**: Bounded 256-slot ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
   - **`InjectorQueue`**: Unbounded global MPMC queue with atomic size tracking for external tasks and overflow.
   - **Zero Request Loss on Scale-Down**: Retiring workers safely drain their remaining local ring tasks back into `InjectorQueue` on thread exit.
 - **🛡 Pipeline Short-Circuiting** — Middleware rejection (e.g. `401 Unauthorized`) immediately sends the response while skipping downstream middlewares and route handlers.
 - **📦 C++20/C++23 Modules & Headers** — Dual distribution models: standard C++ header inclusions (`#include <wavex/wavex.hpp>`) and modern C++ module partitions (`import wavex;`).
-- **🧪 Interactive Postman Dev Server** — Pre-configured testing server ([tests/postman_demo_server.cpp](tests/postman_demo_server.cpp)) with ready-to-use Postman test endpoints.
+- **🧪 Interactive Postman Dev Servers** — Pre-configured testing servers for Plain HTTP ([tests/postman_demo_server.cpp](tests/postman_demo_server.cpp)) and HTTPS/TLS 1.3 ([tests/postman_demo_tls_server.cpp](tests/postman_demo_tls_server.cpp)) with ready-to-use Postman test endpoints.
 
 ---
 
@@ -257,7 +258,59 @@ int main() {
 }
 ```
 
-### 7. C++23 Modules Quick Start
+### 7. HTTP Stay-Active (Keep-Alive) & Inactivity Timeout
+
+WaveX natively supports RFC 7230 / RFC 9112 persistent connections (`Keep-Alive`) and HTTP pipelining for both Plain TCP and TLS 1.3 servers.
+
+#### Server Inactivity Timeout & Request Quotas
+Configure idle timeout thresholds and sequential request limits per persistent connection directly on `Server`:
+
+```cpp
+wavex::server::Http1Server server(router, "0.0.0.0", 8080);
+
+// Inactivity timeout: close socket if client is idle for > 10 seconds
+server.set_keep_alive_timeout(std::chrono::seconds(10));
+
+// Request quota: allow up to 500 requests per TCP connection before gracefully closing
+server.set_max_keep_alive_requests(500);
+
+server.run();
+```
+
+#### Granular Response Header Control
+Control keep-alive persistence dynamically in route handlers:
+
+```cpp
+router.get("/stream", [](auto &, auto &res) -> asio::awaitable<void> {
+    // Advertise keep-alive with custom timeout (seconds) and remaining request count
+    res.set_keep_alive(true, /*timeout_sec=*/15, /*max_requests=*/200);
+    res.status(200).send("Keep-Alive Active");
+    co_return;
+});
+
+router.get("/logout", [](auto &, auto &res) -> asio::awaitable<void> {
+    // Explicitly command connection closure
+    res.set_keep_alive(false); // Sends 'Connection: close' and strips 'Keep-Alive'
+    res.status(200).send("Logged out. Connection closing.");
+    co_return;
+});
+```
+
+#### Zero-Cost Policies & Middleware
+Use compile-time static chain policies or dynamic middlewares:
+
+```cpp
+// 1. StaticChain KeepAlivePolicy (zero runtime overhead)
+router.get("/api/fast", wavex::make_chain(wavex::KeepAlivePolicy<10, 1000>{}, MyHandler{}));
+
+// 2. Dynamic Middleware for Keep-Alive
+router.get("/api/data", {wavex::base::keep_alive(10, 500)}, DataHandler);
+
+// 3. Server-Sent Events (SSE) Stay-Active Middleware
+router.get("/events", {wavex::base::sse_stay_active()}, SseHandler);
+```
+
+### 8. C++23 Modules Quick Start
 
 WaveX fully supports C++23 module imports for ultra-fast compilation:
 
@@ -353,20 +406,20 @@ graph LR
 | `Base/Logger` | ✅ Complete | Levelled logger (TRACE, DEBUG, INFO, WARN, ERROR, FATAL) |
 | `Base/Uri` / `Base/Url` | ✅ Complete | RFC 3986 URI encode/decode & URL query string parser |
 | `Base/MimeTypes` | ✅ Complete | Fast file extension to MIME type mappings (`mime_type_from_ext`) |
-| `Base/Chainable` | ✅ Complete | C++23 "Deducing `this`" static pipeline dispatch (`StaticChain`, `make_chain`, `ConditionalChainable`) |
+| `Base/Chainable` | ✅ Complete | C++23 "Deducing `this`" static pipeline dispatch (`StaticChain`, `make_chain`, `KeepAlivePolicy`, `ConditionalChainable`) |
 | `Base/Request` | ✅ Complete | Protocol-agnostic CRTP request base (`Request<Derived>`, zero-vtable) |
 | `Base/Response` | ✅ Complete | Protocol-agnostic CRTP response builder (`Response<Derived>`, zero-vtable, fluent API) |
-| `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`) & linear pipeline |
+| `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`), linear pipeline, `keep_alive` & `sse_stay_active` |
 | `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex & wildcard (`*filepath`) matching |
 | `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, `query`, etc.) |
 | `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot ring buffer for ultra-fast task stealing |
 | `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
-| `Server/Server` | ✅ Complete | Coroutine TCP server with master acceptor & slave worker pool |
+| `Server/Server` | ✅ Complete | Coroutine TCP & TLS 1.3 server with master acceptor, worker pool, persistent Keep-Alive & idle timeouts |
 | `Server/TlsConfig` | ✅ Complete | TLS 1.3 server encryption config (`cert_file`, `key_file`, `key_password`, `dh_file`, `force_tls13`) |
-| `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder & Chunked Transfer-Encoding |
-| `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request for server parsing & client builder |
-| `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket writing & client parsing |
+| `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder, chunked framing & stream pipelining |
+| `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request with zero-copy stream parsing (`parse_stream`) & keep-alive detection (`should_keep_alive`) |
+| `protos/http/HttpResponse` | ✅ Complete | Concrete HTTP response with zero-alloc socket writing, client parsing & `set_keep_alive` control |
 | `Client/HttpClient` | ✅ Complete | Async coroutine HTTP/1.1 client (`get`, `post`, `send`) — *HTTP/2 to be released soon* |
 | `Cli/Cli` | ✅ Complete | Type-safe CLI argument parser (`wavex::cli::CliParser`), flag validator, and option engine |
 
@@ -392,17 +445,27 @@ cmake --build build
 
 # Run automated tests
 ctest --test-dir build --output-on-failure
+
+# Run Keep-Alive & Persistent Connection tests
+ctest --test-dir build --output-on-failure -R test_server_keepalive
 ```
 
-### Manual Testing with Postman
+### Manual Testing with Postman & cURL
 
-Launch the interactive dev server ([tests/postman_demo_server.cpp](tests/postman_demo_server.cpp)):
+Launch the interactive dev servers:
 
 ```bash
+# 1. Plain HTTP dev server (http://127.0.0.1:8080)
 ./build/tests/Debug/wavex_postman_server.exe
+
+# 2. TLS 1.3 HTTPS dev server (https://127.0.0.1:8443)
+./build/tests/Debug/wavex_postman_tls_server.exe
 ```
 
-Then send HTTP requests in Postman to `http://127.0.0.1:8080` (see endpoint reference in [RELEASE_NOTES.md](RELEASE_NOTES.md)).
+Test TLS 1.3 endpoints directly via cURL:
+```bash
+curl -k https://127.0.0.1:8443/api/json
+```
 
 ---
 
@@ -437,7 +500,8 @@ include/wavex/
 ├── Server/
 │   ├── WorkStealingQueue.hpp← LocalQueue (lock-free ring) & InjectorQueue (global MPMC)
 │   ├── ThreadPool.hpp       ← Tokio-style adaptive worker pool
-│   └── Server.hpp           ← Coroutine TCP server
+│   ├── Server.hpp           ← Coroutine TCP & TLS 1.3 server
+│   └── TlsConfig.hpp        ← TLS 1.3 encryption configuration
 ├── Client/
 │   └── HttpClient.hpp       ← Async coroutine HTTP client
 ├── Cli/
@@ -450,7 +514,7 @@ include/wavex/
         └── HttpResponse.hpp ← Concrete HTTP response
 
 src/                         ← Implementation + C++20 module partitions (.ixx)
-tests/                       ← Automated tests & postman_demo_server.cpp
+tests/                       ← Automated unit tests & interactive postman servers
 cmake/                       ← CMake installation config
 ```
 

@@ -22,8 +22,8 @@
 #include <string>
 #include <utility>
 #include <memory>
-#include <optional>
 #include <filesystem>
+#include <chrono>
 
 #include <asio/io_context.hpp>
 #include <asio/ip/tcp.hpp>
@@ -32,6 +32,9 @@
 #include <asio/detached.hpp>
 #include <asio/write.hpp>
 #include <asio/use_awaitable.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/steady_timer.hpp>
+#include <asio/redirect_error.hpp>
 
 #if WAVEX_HAS_SSL
 #include <asio/ssl.hpp>
@@ -133,6 +136,26 @@ namespace wavex::server {
         /// Access the underlying thread pool
         ThreadPool &pool() { return pool_; }
 
+        /// Configure HTTP Keep-Alive idle timeout
+        void set_keep_alive_timeout(std::chrono::seconds timeout) noexcept {
+            keep_alive_timeout_ = timeout;
+        }
+
+        /// Get current HTTP Keep-Alive idle timeout
+        [[nodiscard]] std::chrono::seconds keep_alive_timeout() const noexcept {
+            return keep_alive_timeout_;
+        }
+
+        /// Configure max sequential requests allowed on a single persistent connection
+        void set_max_keep_alive_requests(unsigned max_requests) noexcept {
+            max_keep_alive_requests_ = max_requests;
+        }
+
+        /// Get max sequential requests allowed on a single persistent connection
+        [[nodiscard]] unsigned max_keep_alive_requests() const noexcept {
+            return max_keep_alive_requests_;
+        }
+
     private:
         RouterType &router_;
         std::string address_;
@@ -143,6 +166,8 @@ namespace wavex::server {
         bool is_running_{false};
         bool tls_enabled_{false};
         TlsConfig tls_config_;
+        std::chrono::seconds keep_alive_timeout_{5};
+        unsigned max_keep_alive_requests_{1000};
 
 #if WAVEX_HAS_SSL
         std::unique_ptr<asio::ssl::context> ssl_ctx_;
@@ -219,91 +244,203 @@ namespace wavex::server {
             }
         }
 
-        /// Plain TCP client connection processing coroutine
+        /// Plain TCP client connection processing coroutine with persistent stay-active loop
         asio::awaitable<void> handle_client(asio::ip::tcp::socket socket) {
+            std::string stream_buf;
+            stream_buf.reserve(8192);
+            auto executor = co_await asio::this_coro::executor;
+
             try {
-                char buffer[4096];
-                std::size_t bytes_read = co_await socket.async_read_some(asio::buffer(buffer));
-                std::string raw_data(buffer, bytes_read);
+                unsigned request_count = 0;
+                while (is_running_) {
+                    RequestType req;
+                    auto p_res = req.parse_stream(stream_buf);
 
-                RequestType req(raw_data);
-                if (!req.parse()) {
-                    ResponseType err_res;
-                    err_res.status(400).send("Bad Request");
-                    std::string out = err_res.serialize();
-                    co_await asio::async_write(socket, asio::buffer(out));
-                    co_return;
-                }
+                    while (p_res == Codec::parser::result::incomplete && is_running_) {
+                        asio::steady_timer timer(executor, keep_alive_timeout_);
+                        bool timed_out = false;
 
-                auto match = router_.resolve(req.method_type(), req.path());
-                if (!match) {
-                    ResponseType not_found_res;
-                    not_found_res.status(404).send("Not Found");
-                    std::string out = not_found_res.serialize();
-                    co_await asio::async_write(socket, asio::buffer(out));
-                    co_return;
-                }
+                        timer.async_wait([&](const std::error_code ec) {
+                            if (!ec) {
+                                timed_out = true;
+                                std::error_code cancel_ec;
+                                std::ignore = socket.cancel(cancel_ec);
+                            }
+                        });
 
-                ResponseType res(&socket);
+                        char buffer[4096];
+                        auto [read_ec, bytes_read] = co_await socket.async_read_some(
+                            asio::buffer(buffer), asio::as_tuple(asio::use_awaitable));
 
-                if (match->middlewares.empty()) {
-                    co_await match->handler(req, res);
-                } else {
-                    co_await run_chain(req, res, match->middlewares, match->handler);
-                }
+                        std::error_code timer_ec;
+                        std::ignore = timer.cancel(timer_ec);
 
-                if (!res.is_sent()) {
-                    std::string response_bytes = res.serialize();
-                    co_await asio::async_write(socket, asio::buffer(response_bytes));
+                        if (timed_out || read_ec == asio::error::operation_aborted) {
+                            // Inactivity timeout expired
+                            co_return;
+                        }
+                        if (read_ec || bytes_read == 0) {
+                            // Client closed connection or read error
+                            co_return;
+                        }
+
+                        stream_buf.append(buffer, bytes_read);
+                        p_res = req.parse_stream(stream_buf);
+                    }
+
+                    if (p_res != Codec::parser::result::success) {
+                        ResponseType err_res(&socket);
+                        err_res.set_keep_alive(false);
+                        err_res.status(400).send("Bad Request");
+                        std::string out = err_res.serialize();
+                        co_await asio::async_write(socket, asio::buffer(out), asio::use_awaitable);
+                        co_return;
+                    }
+
+                    ++request_count;
+                    bool client_wants_keep_alive = req.should_keep_alive();
+                    bool keep_alive = client_wants_keep_alive && (request_count < max_keep_alive_requests_);
+
+                    auto match = router_.resolve(req.method_type(), req.path());
+                    if (!match) {
+                        ResponseType not_found_res(&socket);
+                        not_found_res.set_keep_alive(keep_alive, static_cast<unsigned>(keep_alive_timeout_.count()), max_keep_alive_requests_ - request_count);
+                        not_found_res.status(404).send("Not Found");
+                        std::string out = not_found_res.serialize();
+                        co_await asio::async_write(socket, asio::buffer(out), asio::use_awaitable);
+                        if (!keep_alive) co_return;
+                        stream_buf.erase(0, req.consumed_bytes());
+                        continue;
+                    }
+
+                    ResponseType res(&socket);
+                    res.set_keep_alive(keep_alive, static_cast<unsigned>(keep_alive_timeout_.count()), max_keep_alive_requests_ - request_count);
+
+                    if (match->middlewares.empty()) {
+                        co_await match->handler(req, res);
+                    } else {
+                        co_await run_chain(req, res, match->middlewares, match->handler);
+                    }
+
+                    if (!res.is_sent()) {
+                        std::string response_bytes = res.serialize();
+                        co_await asio::async_write(socket, asio::buffer(response_bytes), asio::use_awaitable);
+                    }
+
+                    stream_buf.erase(0, req.consumed_bytes());
+
+                    if (!keep_alive || !res.should_keep_alive()) {
+                        break;
+                    }
                 }
             } catch (const std::exception &) {
                 // Connection closed or socket error
             }
+
+            asio::error_code ignore_ec;
+            std::ignore = socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore_ec);
+            std::ignore = socket.close(ignore_ec);
             co_return;
         }
 
 #if WAVEX_HAS_SSL
-        /// TLS client connection processing coroutine
+        /// TLS client connection processing coroutine with persistent stay-active loop
         asio::awaitable<void> handle_tls_client(std::unique_ptr<asio::ssl::stream<asio::ip::tcp::socket>> ssl_socket_ptr) {
             auto& ssl_socket = *ssl_socket_ptr;
+            std::string stream_buf;
+            stream_buf.reserve(8192);
+            auto executor = co_await asio::this_coro::executor;
+
             try {
+                unsigned request_count = 0;
                 co_await ssl_socket.async_handshake(asio::ssl::stream_base::server, asio::use_awaitable);
 
-                char buffer[4096];
-                std::size_t bytes_read = co_await ssl_socket.async_read_some(asio::buffer(buffer), asio::use_awaitable);
-                std::string raw_data(buffer, bytes_read);
+                while (is_running_) {
+                    RequestType req;
+                    auto p_res = req.parse_stream(stream_buf);
 
-                RequestType req(raw_data);
-                if (!req.parse()) {
-                    ResponseType err_res;
-                    err_res.status(400).send("Bad Request");
-                    std::string out = err_res.serialize();
-                    co_await asio::async_write(ssl_socket, asio::buffer(out), asio::use_awaitable);
-                    co_return;
+                    while (p_res == Codec::parser::result::incomplete && is_running_) {
+                        asio::steady_timer timer(executor, keep_alive_timeout_);
+                        bool timed_out = false;
+
+                        timer.async_wait([&](const std::error_code ec) {
+                            if (!ec) {
+                                timed_out = true;
+                                std::error_code cancel_ec;
+                                std::ignore = ssl_socket.lowest_layer().cancel(cancel_ec);
+                            }
+                        });
+
+                        char buffer[4096];
+                        auto [read_ec, bytes_read] = co_await ssl_socket.async_read_some(
+                            asio::buffer(buffer), asio::as_tuple(asio::use_awaitable));
+
+                        std::error_code timer_ec;
+                        std::ignore = timer.cancel(timer_ec);
+
+                        if (timed_out || read_ec == asio::error::operation_aborted) {
+                            // Inactivity timeout expired
+                            co_return;
+                        }
+                        if (read_ec || bytes_read == 0) {
+                            // Client closed connection or read error
+                            co_return;
+                        }
+
+                        stream_buf.append(buffer, bytes_read);
+                        p_res = req.parse_stream(stream_buf);
+                    }
+
+                    if (p_res != Codec::parser::result::success) {
+                        ResponseType err_res;
+                        err_res.set_keep_alive(false);
+                        err_res.status(400).send("Bad Request");
+                        std::string out = err_res.serialize();
+                        co_await asio::async_write(ssl_socket, asio::buffer(out), asio::use_awaitable);
+                        co_return;
+                    }
+
+                    ++request_count;
+                    bool client_wants_keep_alive = req.should_keep_alive();
+                    bool keep_alive = client_wants_keep_alive && (request_count < max_keep_alive_requests_);
+
+                    auto match = router_.resolve(req.method_type(), req.path());
+                    if (!match) {
+                        ResponseType not_found_res;
+                        not_found_res.set_keep_alive(keep_alive, static_cast<unsigned>(keep_alive_timeout_.count()), max_keep_alive_requests_ - request_count);
+                        not_found_res.status(404).send("Not Found");
+                        std::string out = not_found_res.serialize();
+                        co_await asio::async_write(ssl_socket, asio::buffer(out), asio::use_awaitable);
+                        if (!keep_alive) co_return;
+                        stream_buf.erase(0, req.consumed_bytes());
+                        continue;
+                    }
+
+                    ResponseType res;
+                    res.set_keep_alive(keep_alive, static_cast<unsigned>(keep_alive_timeout_.count()), max_keep_alive_requests_ - request_count);
+
+                    if (match->middlewares.empty()) {
+                        co_await match->handler(req, res);
+                    } else {
+                        co_await run_chain(req, res, match->middlewares, match->handler);
+                    }
+
+                    std::string response_bytes = res.serialize();
+                    co_await asio::async_write(ssl_socket, asio::buffer(response_bytes), asio::use_awaitable);
+
+                    stream_buf.erase(0, req.consumed_bytes());
+
+                    if (!keep_alive || !res.should_keep_alive()) {
+                        break;
+                    }
                 }
-
-                auto match = router_.resolve(req.method_type(), req.path());
-                if (!match) {
-                    ResponseType not_found_res;
-                    not_found_res.status(404).send("Not Found");
-                    std::string out = not_found_res.serialize();
-                    co_await asio::async_write(ssl_socket, asio::buffer(out), asio::use_awaitable);
-                    co_return;
-                }
-
-                ResponseType res;
-
-                if (match->middlewares.empty()) {
-                    co_await match->handler(req, res);
-                } else {
-                    co_await run_chain(req, res, match->middlewares, match->handler);
-                }
-
-                std::string response_bytes = res.serialize();
-                co_await asio::async_write(ssl_socket, asio::buffer(response_bytes), asio::use_awaitable);
             } catch (const std::exception &) {
-                // Connection closed or SSL handshake/read error
+                // Connection closed or SSL error
             }
+
+            asio::error_code ignore_ec;
+            co_await ssl_socket.async_shutdown(asio::redirect_error(asio::use_awaitable, ignore_ec));
+            std::ignore = ssl_socket.lowest_layer().close(ignore_ec);
             co_return;
         }
 #endif

@@ -53,6 +53,12 @@ namespace wavex::engine {
         using Base::use;
         using Base::resolve;
 
+        HttpRouter() = default;
+        HttpRouter(const HttpRouter &) = delete;
+        HttpRouter &operator=(const HttpRouter &) = delete;
+        HttpRouter(HttpRouter &&) noexcept = default;
+        HttpRouter &operator=(HttpRouter &&) noexcept = default;
+
         /**
          * @brief Singleton instance getter for HttpRouter.
          * @return Reference to the process-wide HttpRouter instance.
@@ -60,6 +66,14 @@ namespace wavex::engine {
         static HttpRouter &instance() {
             static HttpRouter s_instance;
             return s_instance;
+        }
+
+        /**
+         * @brief Creates a distinct, local HttpRouter instance.
+         * @return A new local HttpRouter instance independent of the process-wide singleton.
+         */
+        static HttpRouter make_instance() {
+            return HttpRouter{};
         }
 
         // ---------------------------------------------------------------

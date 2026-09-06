@@ -253,4 +253,29 @@ namespace wavex {
         }
     };
 
+    /**
+     * @struct KeepAlivePolicy
+     * @brief Zero-alloc static chainable handler enforcing HTTP Keep-Alive policy.
+     * @tparam TimeoutSec Idle timeout in seconds (default: 5).
+     * @tparam MaxRequests Max requests per persistent connection (default: 1000).
+     */
+    template <unsigned TimeoutSec = 5, unsigned MaxRequests = 1000>
+    struct KeepAlivePolicy : public Chainable {
+        template <typename Self, typename Req, typename Res>
+        bool handle_impl(this Self&&, Req& req, Res& res) {
+            if (req.should_keep_alive()) {
+                res.set("Connection", "keep-alive");
+                res.set("Keep-Alive", "timeout=" + std::to_string(TimeoutSec) + ", max=" + std::to_string(MaxRequests));
+            } else {
+                res.set("Connection", "close");
+            }
+            return true;
+        }
+
+        template <typename Self>
+        [[nodiscard]] constexpr std::string_view name_impl(this Self&&) noexcept {
+            return "KeepAlivePolicy";
+        }
+    };
+
 } // namespace wavex
