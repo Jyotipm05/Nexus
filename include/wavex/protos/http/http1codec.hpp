@@ -730,6 +730,10 @@ namespace wavex::protos::http {
         using decoder = wavex::protos::http::decoder;
         using request = wavex::protos::http::request;
         using response = wavex::protos::http::response;
+
+        static std::string_view status_text_for(const unsigned int code) noexcept {
+            return wavex::protos::http::status_text_for(code);
+        }
     };
 }
 

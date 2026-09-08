@@ -24,6 +24,7 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 - **🛠 Modern CLI Engine** — High-performance CLI argument parser (`wavex::cli::CliParser`) supporting flags (`--verbose`, `-v`), key-value options (`--host`, `-p`), positional arguments, typed getters (`get_int`, `get_bool`), and automatic `--help` generation.
 - **🔒 TLS 1.3 OpenSSL Encryption Engine** — Strict, native TLS 1.3 server encryption (`enable_tls()`, `wavex::server::TlsConfig`) supporting custom PEM certificate chains (`cert_file`), private key passphrases (`key_password`), DH parameters (`dh_file`), and strict legacy SSL/TLS protocol disabling (`force_tls13`).
 - **🔄 HTTP Stay-Active & Inactivity Timeout (RFC 7230 / RFC 9112)** — Full persistent connection support over Plain TCP and TLS 1.3 streams. Handles HTTP pipelining without socket re-establishment, manages inactivity timeouts (`set_keep_alive_timeout`) via Asio steady timers, enforces maximum request thresholds (`set_max_keep_alive_requests`), and includes zero-cost compile-time policies (`KeepAlivePolicy`) and middlewares (`keep_alive`, `sse_stay_active`).
+- **🚫 Configurable 404 Not Found Engine** — Default `"Not Found"` string response with full customization support across Router and Server: custom text, HTML/JSON bodies with automatic MIME types, static error pages loaded from disk (`not_found_page`), or custom coroutine handlers.
 - **🧵 Tokio-Style Work-Stealing Dual-Queue Runtime** —
   - **`LocalQueue`**: Bounded 256-slot ring buffer per worker thread for ultra-fast LIFO/FIFO work stealing.
   - **`InjectorQueue`**: Unbounded global MPMC queue with atomic size tracking for external tasks and overflow.
@@ -36,7 +37,66 @@ WaveX draws inspiration from **Rust's Actix Web** (hybrid radix-tree routing), *
 
 ## Quick Start
 
-### 1. HTTP Server & Coroutine Middleware
+### 1. Minimal "Hello, World!" Server
+
+The absolute simplest WaveX server in under 15 lines of code:
+
+```cpp
+#include <wavex/wavex.hpp>
+
+int main() {
+    auto &router = wavex::engine::HttpRouter::instance();
+
+    // Plain text "Hello, World!" endpoint
+    router.get("/", [](auto &, auto &res) -> asio::awaitable<void> {
+        res.status(200).send("Hello, World!");
+        co_return;
+    });
+
+    // Bind and run server on http://127.0.0.1:8080
+    wavex::server::Server server(router, "127.0.0.1", 8080);
+    wavex::log::info("WaveX server running on http://127.0.0.1:8080");
+    server.run();
+
+    return 0;
+}
+```
+
+### 2. "Hello, World!" JSON API & Route Parameters
+
+Returning structured JSON and reading dynamic path parameters (`:name`):
+
+```cpp
+#include <wavex/wavex.hpp>
+
+int main() {
+    auto &router = wavex::engine::HttpRouter::instance();
+
+    // 1. JSON "Hello, World!" endpoint
+    router.get("/api/hello", [](auto &, auto &res) -> asio::awaitable<void> {
+        res.status(200).json({
+            {"message", "Hello, World!"},
+            {"framework", "WaveX"},
+            {"status", "success"}
+        });
+        co_return;
+    });
+
+    // 2. Dynamic route parameter: /hello/Alice -> "Hello, Alice!"
+    router.get("/hello/:name", [](auto &req, auto &res) -> asio::awaitable<void> {
+        auto name = req.param("name").value_or("World");
+        res.status(200).send("Hello, " + std::string(name) + "!");
+        co_return;
+    });
+
+    wavex::server::Server server(router, "127.0.0.1", 8080);
+    server.run();
+
+    return 0;
+}
+```
+
+### 3. Full HTTP Server & Coroutine Middleware
 
 ```cpp
 #include <iostream>
@@ -89,7 +149,7 @@ int main() {
 }
 ```
 
-### 2. Modern Logging with Source Location & ANSI Colors
+### 4. Modern Logging with Source Location & ANSI Colors
 
 Zero-macro, high-performance logging with automatic `std::source_location` call-site capture and ANSI terminal colors:
 
@@ -117,7 +177,7 @@ int main() {
 }
 ```
 
-### 3. C++23 "Deducing This" Static Pipelines (`class Chainable`)
+### 5. C++23 "Deducing This" Static Pipelines (`class Chainable`)
 
 Build compile-time static dispatch pipelines without vtables or dynamic heap allocations using `StaticChain` and `make_chain`:
 
@@ -163,7 +223,7 @@ int main() {
 }
 ```
 
-### 4. Async HTTP Client
+### 6. Async HTTP Client
 
 > [!NOTE]
 > `HttpClient` currently supports **HTTP/1.1** (with TLS 1.3). **HTTP/2** support is planned for release soon.
@@ -189,7 +249,7 @@ asio::awaitable<void> fetch_data(asio::io_context &ioc) {
 }
 ```
 
-### 5. Command-Line Interface (CLI) Engine
+### 7. Command-Line Interface (CLI) Engine
 
 ```cpp
 #include <wavex/Cli/Cli.hpp>
@@ -221,7 +281,7 @@ int main(int argc, char* argv[]) {
 }
 ```
 
-### 6. TLS 1.3 Server Encryption (`TlsConfig`)
+### 8. TLS 1.3 Server Encryption (`TlsConfig`)
 
 Enable strict TLS 1.3 HTTPS server encryption using `server.enable_tls()` with custom certificate/key paths or a `wavex::server::TlsConfig` struct:
 
@@ -258,7 +318,7 @@ int main() {
 }
 ```
 
-### 7. HTTP Stay-Active (Keep-Alive) & Inactivity Timeout
+### 9. HTTP Stay-Active (Keep-Alive) & Inactivity Timeout
 
 WaveX natively supports RFC 7230 / RFC 9112 persistent connections (`Keep-Alive`) and HTTP pipelining for both Plain TCP and TLS 1.3 servers.
 
@@ -310,7 +370,42 @@ router.get("/api/data", {wavex::base::keep_alive(10, 500)}, DataHandler);
 router.get("/events", {wavex::base::sse_stay_active()}, SseHandler);
 ```
 
-### 8. C++23 Modules Quick Start
+### 10. Configurable 404 Not Found Handling
+
+By default, any unmatched route automatically responds with HTTP status 404 and the plain text `"Not Found"`. Developers can easily customize 404 handling across both `HttpRouter` and `Server`:
+
+#### Option A: Custom String, HTML, or JSON
+```cpp
+// Custom plain text or HTML on Router
+router.not_found("<h1>404 - Page Not Found</h1>", "text/html");
+
+// Or configure directly on Server
+server.set_not_found("Custom 404 text", "text/plain");
+```
+
+#### Option B: Load Error Page from File (Auto-MIME Detection)
+```cpp
+// Reads static file from disk and infers Content-Type via wavex::base::mime_type_from_path
+router.not_found_page("public/404.html");
+
+// Or configure directly on Server
+server.set_not_found_page("public/404.html");
+```
+
+#### Option C: Full Dynamic Coroutine Handler
+```cpp
+router.not_found([](auto &req, auto &res) -> asio::awaitable<void> {
+    nlohmann::json j = {
+        {"error", "Not Found"},
+        {"requested_path", std::string(req.path())},
+        {"method", to_string(req.method_type())}
+    };
+    res.status(404).json(j);
+    co_return;
+});
+```
+
+### 11. C++23 Modules Quick Start
 
 WaveX fully supports C++23 module imports for ultra-fast compilation:
 
@@ -397,6 +492,64 @@ graph LR
     style Pool fill:#52b788,color:#000
 ```
 
+### Request Lifecycle (UML Activity Diagram)
+
+The following UML activity diagram illustrates the end-to-end lifecycle of an HTTP connection in WaveX — from initial TCP/TLS acceptance, Asio coroutine scheduling, and zero-copy `http1codec` parsing, through radix-tree route resolution, middleware chain execution, short-circuit dispatch, configurable 404 fallback, and persistent Keep-Alive evaluation:
+
+```mermaid
+flowchart TD
+    %% UML Activity Diagram - Request Lifecycle
+    Start([● Connection Accepted]) --> InitSession[Initialize Connection Session & Arm Inactivity Timer]
+    
+    InitSession --> AwaitData[Wait for Incoming Data / async_read_some]
+    
+    AwaitData --> ReadCheck{"Data Received or Inactivity Timeout?"}
+    ReadCheck -- "Inactivity Timeout / Client EOF" --> CloseSocket[Gracefully Close Socket]
+    CloseSocket --> Terminate([● End Session])
+    
+    ReadCheck -- "Data Received" --> ParseCodec[Parse HTTP Request via http1codec]
+    ParseCodec --> SyntaxCheck{"Valid HTTP Framing?"}
+    SyntaxCheck -- "Malformed Request" --> Send400[Send 400 Bad Request]
+    Send400 --> CloseSocket
+    
+    SyntaxCheck -- "Valid Request" --> ResetTimer[Refresh Inactivity Timer]
+    ResetTimer --> RouteLookup[Radix-Tree Route Lookup in HttpRouter]
+    
+    RouteLookup --> RouteCheck{"Route Matched?"}
+    
+    %% Unmatched route -> Configurable 404
+    RouteCheck -- "No (Unmatched)" --> Exec404[Execute Configured 404 Handler<br/>Custom Coroutine / Static File / Default Text]
+    Exec404 --> SendResponse[Serialize & Dispatch HTTP Response]
+    
+    %% Matched route -> Middleware & Handler
+    RouteCheck -- "Yes" --> ExtractParams[Extract Dynamic Params :id & Wildcards]
+    ExtractParams --> ExecMW[Execute Middleware Chain / StaticChain]
+    
+    ExecMW --> ShortCircuitCheck{"Middleware Short-Circuited?<br/>(e.g., Auth Guard, Rate Limit, Cache)"}
+    ShortCircuitCheck -- "Yes (Response Already Sent)" --> SendResponse
+    ShortCircuitCheck -- "No (next() Called)" --> ExecHandler[Execute Target Route Handler]
+    ExecHandler --> SendResponse
+    
+    SendResponse --> CheckPersistence{"Evaluate Persistence Policy:<br/>- HTTP/1.1 Keep-Alive requested<br/>- requests_served < max_requests<br/>- Inactivity timeout active<br/>- Connection != 'close'"}
+    
+    CheckPersistence -- "Keep-Alive Active" --> IncRequests[Increment Requests Served Count]
+    IncRequests --> AwaitData
+    
+    CheckPersistence -- "Close / Quota Exceeded" --> CheckTLS{"Is TLS 1.3 Active?"}
+    CheckTLS -- "Yes" --> TLSShutdown[Perform TLS Stream Shutdown]
+    CheckTLS -- "No" --> CloseSocket
+    TLSShutdown --> CloseSocket
+
+    %% Styling
+    classDef action fill:#2d6a4f,stroke:#1b4332,stroke-width:2px,color:#fff;
+    classDef decision fill:#1b4332,stroke:#40916c,stroke-width:2px,color:#fff;
+    classDef terminal fill:#081c15,stroke:#52b788,stroke-width:3px,color:#fff;
+    
+    class InitSession,AwaitData,ParseCodec,Send400,ResetTimer,RouteLookup,Exec404,ExtractParams,ExecMW,ExecHandler,SendResponse,IncRequests,TLSShutdown,CloseSocket action;
+    class ReadCheck,SyntaxCheck,RouteCheck,ShortCircuitCheck,CheckPersistence,CheckTLS decision;
+    class Start,Terminate terminal;
+```
+
 ---
 
 ## Component Status
@@ -410,12 +563,12 @@ graph LR
 | `Base/Request` | ✅ Complete | Protocol-agnostic CRTP request base (`Request<Derived>`, zero-vtable) |
 | `Base/Response` | ✅ Complete | Protocol-agnostic CRTP response builder (`Response<Derived>`, zero-vtable, fluent API) |
 | `Base/MiddleWare` | ✅ Complete | Coroutine-aware middleware template (`GenericMiddlewareFn`), linear pipeline, `keep_alive` & `sse_stay_active` |
-| `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex & wildcard (`*filepath`) matching |
-| `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, `query`, etc.) |
+| `Engine/Router` | ✅ Complete | Protocol-agnostic radix tree with RE2 regex, wildcard matching & configurable 404 handler |
+| `Engine/HttpRouter` | ✅ Complete | HTTP method convenience routing (`get`, `post`, `put`, `del`, `patch`, `query`) & 404 customization |
 | `Server/LocalQueue` | ✅ Complete | Per-worker 256-slot ring buffer for ultra-fast task stealing |
 | `Server/InjectorQueue` | ✅ Complete | Global unbounded MPMC task overflow queue with atomic size tracking |
 | `Server/ThreadPool` | ✅ Complete | Adaptive Tokio-style work-stealing thread pool with load hysteresis |
-| `Server/Server` | ✅ Complete | Coroutine TCP & TLS 1.3 server with master acceptor, worker pool, persistent Keep-Alive & idle timeouts |
+| `Server/Server` | ✅ Complete | Coroutine TCP & TLS 1.3 server with master acceptor, worker pool, persistent Keep-Alive, idle timeouts & 404 handling |
 | `Server/TlsConfig` | ✅ Complete | TLS 1.3 server encryption config (`cert_file`, `key_file`, `key_password`, `dh_file`, `force_tls13`) |
 | `protos/http/http1codec` | ✅ Complete | Zero-copy HTTP/1.x parser, encoder, response decoder, chunked framing & stream pipelining |
 | `protos/http/HttpRequest` | ✅ Complete | Concrete HTTP request with zero-copy stream parsing (`parse_stream`) & keep-alive detection (`should_keep_alive`) |
@@ -446,8 +599,11 @@ cmake --build build
 # Run automated tests
 ctest --test-dir build --output-on-failure
 
-# Run Keep-Alive & Persistent Connection tests
+# Run Keep-Alive tests
 ctest --test-dir build --output-on-failure -R test_server_keepalive
+
+# Run 404 Not Found handling tests
+ctest --test-dir build --output-on-failure -R test_not_found
 ```
 
 ### Manual Testing with Postman & cURL

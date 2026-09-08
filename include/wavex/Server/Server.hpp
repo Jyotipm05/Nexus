@@ -22,8 +22,11 @@
 #include <string>
 #include <utility>
 #include <memory>
+#include <optional>
 #include <filesystem>
+#include <fstream>
 #include <chrono>
+#include <wavex/Base/MimeTypes.hpp>
 
 #include <asio/io_context.hpp>
 #include <asio/ip/tcp.hpp>
@@ -156,6 +159,54 @@ namespace wavex::server {
             return max_keep_alive_requests_;
         }
 
+        using NotFoundHandler = std::function<asio::awaitable<void>(RequestType &, ResponseType &)>;
+
+        /**
+         * @brief Configures a custom coroutine handler for 404 Not Found responses on this server.
+         * @param h Custom handler lambda or function.
+         */
+        void set_not_found_handler(NotFoundHandler h) {
+            server_not_found_handler_ = std::move(h);
+        }
+
+        /**
+         * @brief Configures a custom static body and Content-Type for 404 Not Found responses on this server.
+         * @param body Custom response payload string (e.g. custom text, JSON string, or HTML).
+         * @param content_type Optional Content-Type header (defaults to "text/plain").
+         */
+        void set_not_found(std::string body, std::string content_type = "text/plain") {
+            server_not_found_handler_ = [b = std::move(body), ct = std::move(content_type)](RequestType &, ResponseType &res) -> asio::awaitable<void> {
+                res.status(404);
+                if (!ct.empty()) {
+                    res.set("Content-Type", ct);
+                }
+                res.send(b);
+                co_return;
+            };
+        }
+
+        /**
+         * @brief Configures a static file or HTML page from disk for 404 Not Found responses on this server.
+         *
+         * Automatically infers Content-Type via wavex::base::mime_type_from_path.
+         * If the file is not found or unreadable, falls back to default "Not Found".
+         *
+         * @param file_path Path to the error page file.
+         */
+        void set_not_found_page(const std::filesystem::path &file_path) {
+            if (std::filesystem::exists(file_path)) {
+                std::ifstream file(file_path, std::ios::binary);
+                if (file) {
+                    std::string content((std::istreambuf_iterator<char>(file)),
+                                         std::istreambuf_iterator<char>());
+                    std::string mime = std::string(base::mime_type_from_path(file_path.string()));
+                    set_not_found(std::move(content), std::move(mime));
+                    return;
+                }
+            }
+            set_not_found("Not Found", "text/plain");
+        }
+
     private:
         RouterType &router_;
         std::string address_;
@@ -168,6 +219,7 @@ namespace wavex::server {
         TlsConfig tls_config_;
         std::chrono::seconds keep_alive_timeout_{5};
         unsigned max_keep_alive_requests_{1000};
+        std::optional<NotFoundHandler> server_not_found_handler_{std::nullopt};
 
 #if WAVEX_HAS_SSL
         std::unique_ptr<asio::ssl::context> ssl_ctx_;
@@ -305,10 +357,19 @@ namespace wavex::server {
                     if (!match) {
                         ResponseType not_found_res(&socket);
                         not_found_res.set_keep_alive(keep_alive, static_cast<unsigned>(keep_alive_timeout_.count()), max_keep_alive_requests_ - request_count);
-                        not_found_res.status(404).send("Not Found");
-                        std::string out = not_found_res.serialize();
-                        co_await asio::async_write(socket, asio::buffer(out), asio::use_awaitable);
-                        if (!keep_alive) co_return;
+                        not_found_res.status(404);
+
+                        if (server_not_found_handler_) {
+                            co_await (*server_not_found_handler_)(req, not_found_res);
+                        } else {
+                            co_await router_.not_found_handler()(req, not_found_res);
+                        }
+
+                        if (!not_found_res.is_sent()) {
+                            std::string out = not_found_res.serialize();
+                            co_await asio::async_write(socket, asio::buffer(out), asio::use_awaitable);
+                        }
+                        if (!keep_alive || !not_found_res.should_keep_alive()) co_return;
                         stream_buf.erase(0, req.consumed_bytes());
                         continue;
                     }
@@ -408,10 +469,17 @@ namespace wavex::server {
                     if (!match) {
                         ResponseType not_found_res;
                         not_found_res.set_keep_alive(keep_alive, static_cast<unsigned>(keep_alive_timeout_.count()), max_keep_alive_requests_ - request_count);
-                        not_found_res.status(404).send("Not Found");
+                        not_found_res.status(404);
+
+                        if (server_not_found_handler_) {
+                            co_await (*server_not_found_handler_)(req, not_found_res);
+                        } else {
+                            co_await router_.not_found_handler()(req, not_found_res);
+                        }
+
                         std::string out = not_found_res.serialize();
                         co_await asio::async_write(ssl_socket, asio::buffer(out), asio::use_awaitable);
-                        if (!keep_alive) co_return;
+                        if (!keep_alive || !not_found_res.should_keep_alive()) co_return;
                         stream_buf.erase(0, req.consumed_bytes());
                         continue;
                     }

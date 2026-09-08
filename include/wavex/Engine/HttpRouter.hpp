@@ -48,10 +48,14 @@ namespace wavex::engine {
     public:
         using Base = Router<HttpProto<Codec>>;
         using typename Base::Handler;
+        using typename Base::NotFoundHandler;
         using typename Base::MiddlewareFn;
         using Base::route;
         using Base::use;
         using Base::resolve;
+        using Base::not_found;
+        using Base::not_found_page;
+        using Base::not_found_handler;
 
         HttpRouter() = default;
         HttpRouter(const HttpRouter &) = delete;

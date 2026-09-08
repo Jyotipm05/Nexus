@@ -46,13 +46,16 @@
 #include <memory>
 #include <functional>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 #include <re2/re2.h>
 
-#include <wavex/Base/Request.hpp>
+//#include <wavex/Base/Request.hpp>
 #include <wavex/Base/Response.hpp>
 #include <wavex/Base/MiddleWare.hpp>
 #include <wavex/Base/Chainable.hpp>
+#include <wavex/Base/MimeTypes.hpp>
 #include <asio/awaitable.hpp>
 
 namespace wavex::engine {
@@ -65,12 +68,15 @@ namespace wavex::engine {
     template<typename Proto>
     class Router {
     public:
-        using MethodType = typename Proto::method;
-        using RequestType = typename Proto::request;
-        using ResponseType = typename Proto::response;
+        using MethodType = Proto::method;
+        using RequestType = Proto::request;
+        using ResponseType = Proto::response;
 
         /// Handler signature for this router's protocol
         using Handler = std::function<asio::awaitable<void>(RequestType &, ResponseType &)>;
+
+        /// 404 Not Found handler signature
+        using NotFoundHandler = std::function<asio::awaitable<void>(RequestType &, ResponseType &)>;
 
         /// Middleware function signature for this router's protocol
         using MiddlewareFn = base::GenericMiddlewareFn<RequestType, ResponseType>;
@@ -225,8 +231,7 @@ namespace wavex::engine {
         template <typename... Handlers>
         void use(StaticChain<Handlers...> chain) {
             use([c = std::move(chain)](RequestType &req, ResponseType &res, base::Next next) mutable -> asio::awaitable<void> {
-                bool ok = co_await c.process_all_async(req, res);
-                if (ok) {
+                if (const bool ok = co_await c.process_all_async(req, res); ok) {
                     co_await next();
                 }
             });
@@ -238,11 +243,70 @@ namespace wavex::engine {
         template <typename... Handlers>
         void use(const std::string_view prefix, StaticChain<Handlers...> chain) {
             use(prefix, [c = std::move(chain)](RequestType &req, ResponseType &res, base::Next next) mutable -> asio::awaitable<void> {
-                bool ok = co_await c.process_all_async(req, res);
-                if (ok) {
+                if (const bool ok = co_await c.process_all_async(req, res); ok) {
                     co_await next();
                 }
             });
+        }
+
+        // ---------------------------------------------------------------
+        //  404 Not Found handling
+        // ---------------------------------------------------------------
+
+        /**
+         * @brief Configures a custom coroutine handler for 404 Not Found responses.
+         * @param h Custom handler lambda or function.
+         */
+        void not_found(NotFoundHandler h) {
+            not_found_handler_ = std::move(h);
+        }
+
+        /**
+         * @brief Configures a custom static body and Content-Type for 404 Not Found responses.
+         * @param body Custom response payload string (e.g. custom text, JSON string, or HTML).
+         * @param content_type Optional Content-Type header (defaults to "text/plain").
+         */
+        void not_found(std::string body, std::string content_type = "text/plain") {
+            not_found_handler_ = [b = std::move(body), ct = std::move(content_type)](RequestType &, ResponseType &res) -> asio::awaitable<void> {
+                res.status(404);
+                if (!ct.empty()) {
+                    res.set("Content-Type", ct);
+                }
+                res.send(b);
+                co_return;
+            };
+        }
+
+        /**
+         * @brief Configures a static file or HTML page from disk for 404 Not Found responses.
+         *
+         * Automatically infers Content-Type via wavex::base::mime_type_from_path.
+         * If the file is not found or unreadable, falls back to default "Not Found".
+         *
+         * @param file_path Path to the error page file.
+         */
+        void not_found_page(const std::filesystem::path &file_path) {
+            if (std::filesystem::exists(file_path)) {
+                std::ifstream file(file_path, std::ios::binary);
+                if (file) {
+                    std::string content((std::istreambuf_iterator<char>(file)),
+                                         std::istreambuf_iterator<char>());
+                    std::string mime = std::string(base::mime_type_from_path(file_path.string()));
+                    not_found(std::move(content), std::move(mime));
+                    return;
+                }
+            }
+            not_found("Not Found", "text/plain");
+        }
+
+        /// Access the currently active 404 Not Found handler
+        [[nodiscard]] const NotFoundHandler &not_found_handler() const noexcept {
+            return not_found_handler_;
+        }
+
+        /// Access the currently active 404 Not Found handler (mutable)
+        [[nodiscard]] NotFoundHandler &not_found_handler() noexcept {
+            return not_found_handler_;
         }
 
         // ---------------------------------------------------------------
@@ -338,6 +402,11 @@ namespace wavex::engine {
         // compilation cost at registration time. Not accessed on resolve()'s
         // hot path — only during route().
         std::unordered_map<std::string, std::shared_ptr<re2::RE2> > regex_cache_;
+
+        NotFoundHandler not_found_handler_ = [](RequestType &, ResponseType &res) -> asio::awaitable<void> {
+            res.status(404).send("Not Found");
+            co_return;
+        };
 
     private:
         // ---------------------------------------------------------------

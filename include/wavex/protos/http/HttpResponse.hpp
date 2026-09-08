@@ -58,8 +58,21 @@ namespace wavex::protos::http {
         using base::Response::headers_;
         using base::Response::is_sent_;
         using base::Response::set;
-        using base::Response::status;
         using base::Response::send;
+
+        /// Set the response status code and automatically update status text from Codec
+        HttpResponse &status(const unsigned int code) {
+            status_code_ = code;
+            status_text_ = Codec::status_text_for(code);
+            return *this;
+        }
+
+        /// Set the response status code with custom status text
+        HttpResponse &status(const unsigned int code, const std::string_view text) {
+            status_code_ = code;
+            status_text_ = text;
+            return *this;
+        }
 
         HttpResponse() = default;
 
@@ -186,7 +199,9 @@ namespace wavex::protos::http {
         [[nodiscard]] std::string serialize_impl() const {
             response_type res;
             res.status_code = status_code_;
-            res.status_text = status_text_;
+            res.status_text = (status_text_.empty() || (status_text_ == "OK" && status_code_ != 200))
+                ? Codec::status_text_for(status_code_)
+                : status_text_;
             res.body = body_view_.empty() ? std::string_view(body_) : body_view_;
 
             if (!headers_views_.empty()) {
@@ -421,7 +436,9 @@ namespace wavex::protos::http {
         [[nodiscard]] std::string serialize_headers_only() const {
             response_type res;
             res.status_code = status_code_;
-            res.status_text = status_text_;
+            res.status_text = (status_text_.empty() || (status_text_ == "OK" && status_code_ != 200))
+                ? Codec::status_text_for(status_code_)
+                : status_text_;
             res.body = "";
 
             if (!headers_views_.empty()) {
